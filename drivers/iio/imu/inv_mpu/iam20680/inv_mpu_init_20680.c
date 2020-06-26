@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 InvenSense, Inc.
+ * Copyright (C) 2017-2019 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -157,6 +157,7 @@ static void inv_init_sensor_struct(struct inv_mpu_state *st)
 	st->sensor_l[SENSOR_L_SIXQ_WAKE].wake_on = true;
 	st->sensor_l[SENSOR_L_NINEQ_WAKE].wake_on = true;
 	st->sensor_l[SENSOR_L_PEDQ_WAKE].wake_on = true;
+	st->sensor_l[SENSOR_L_GESTURE_ACCEL].wake_on = true;
 }
 
 static int inv_init_config(struct inv_mpu_state *st)
@@ -243,16 +244,11 @@ int inv_mpu_initialize(struct inv_mpu_state *st)
 	if (result)
 		return result;
 
-	result = mem_r(MPU_SOFT_REV_ADDR, 1, &v);
-	pr_info("sw_rev=%x, res=%d\n", v, result);
-	if (result)
-		return result;
 	st->chip_config.lp_en_mode_off = 0;
 
-	pr_info("%s: Mask %X, v = %X, lp mode = %d\n", __func__,
-		MPU_SOFT_REV_MASK, v, st->chip_config.lp_en_mode_off);
 	result = inv_set_power(st, false);
 
 	pr_info("%s: initialize result is %d....\n", __func__, result);
-	return 0;
+
+	return result;
 }

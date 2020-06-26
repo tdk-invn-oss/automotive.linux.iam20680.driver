@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2012-2018 InvenSense, Inc.
+* Copyright (C) 2012-2019 InvenSense, Inc.
 *
 * This software is licensed under the terms of the GNU General Public
 * License version 2, as published by the Free Software Foundation, and
@@ -26,6 +26,7 @@
 #include <linux/poll.h>
 #include <linux/miscdevice.h>
 #include <linux/spinlock.h>
+#include <linux/of_device.h>
 
 #include "inv_mpu_iio.h"
 #include "inv_mpu_dts.h"
@@ -92,6 +93,8 @@ static int inv_spi_read(struct inv_mpu_state *st, u8 reg, int len, u8 *data)
 
 }
 
+#if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
+	defined(CONFIG_INV_MPU_IIO_ICM20608D)
 static int inv_spi_mem_write(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
 		     u32 len, u8 const *data)
 {
@@ -140,6 +143,7 @@ static int inv_spi_mem_read(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
 
 	return res;
 }
+#endif
 
 /*
  *  inv_mpu_probe() - probe function.
@@ -151,29 +155,26 @@ static int inv_mpu_probe(struct spi_device *spi)
 	struct iio_dev *indio_dev;
 	int result;
 
-#ifdef KERNEL_VERSION_4_X
-	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
-	if (indio_dev == NULL) {
-		pr_err("memory allocation failed\n");
-		result = -ENOMEM;
-		goto out_no_free;
-	}
-#else
 	indio_dev = iio_device_alloc(sizeof(*st));
 	if (indio_dev == NULL) {
 		pr_err("memory allocation failed\n");
 		result = -ENOMEM;
 		goto out_no_free;
 	}
-#endif
+
 	st = iio_priv(indio_dev);
 	st->write = inv_spi_single_write;
 	st->read = inv_spi_read;
+#if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
+	defined(CONFIG_INV_MPU_IIO_ICM20608D)
 	st->mem_write = inv_spi_mem_write;
 	st->mem_read = inv_spi_mem_read;
+#endif
 	st->dev = &spi->dev;
 	st->irq = spi->irq;
-#if !defined(CONFIG_INV_MPU_IIO_ICM20602) \
+#if defined(CONFIG_INV_MPU_IIO_ICM42600)
+	st->i2c_dis = BIT_UI_SIFS_DISABLE_I2C;
+#elif !defined(CONFIG_INV_MPU_IIO_ICM20602) \
 	&& !defined(CONFIG_INV_MPU_IIO_IAM20680)
 	st->i2c_dis = BIT_I2C_IF_DIS;
 #endif
@@ -185,71 +186,43 @@ static int inv_mpu_probe(struct spi_device *spi)
 #ifdef CONFIG_OF
 	result = invensense_mpu_parse_dt(st->dev, &st->plat_data);
 	if (result)
-#  ifdef KERNEL_VERSION_4_X
-		return -ENODEV;
-#  else
 		goto out_free;
-#  endif
+#else
+	if (dev_get_platdata(st->dev) == NULL) {
+		result = -ENODEV;
+		goto out_free;
+	}
+	st->plat_data = *(struct mpu_platform_data *)dev_get_platdata(st->dev);
+#endif
 	/* Power on device */
 	if (st->plat_data.power_on) {
 		result = st->plat_data.power_on(&st->plat_data);
 		if (result < 0) {
 			dev_err(st->dev, "power_on failed: %d\n", result);
-#  ifdef KERNEL_VERSION_4_X
-			return -ENODEV;
-#  else
 			goto out_free;
-#  endif
 		}
 		pr_info("%s: power on here.\n", __func__);
 	}
 	pr_info("%s: power on.\n", __func__);
 
 	msleep(100);
-#else
-	if (dev_get_platdata(st->dev) == NULL)
-#  ifdef KERNEL_VERSION_4_X
-		return -ENODEV;
-#  else
-		goto out_free;
-#  endif
-	st->plat_data = *(struct mpu_platform_data *)dev_get_platdata(st->dev);
-#endif
 
 	/* power is turned on inside check chip type */
 	result = inv_check_chip_type(indio_dev, id->name);
 	if (result)
-#ifdef KERNEL_VERSION_4_X
-		return -ENODEV;
-#else
 		goto out_free;
-#endif
 
 	result = inv_mpu_configure_ring(indio_dev);
 	if (result) {
 		pr_err("configure ring buffer fail\n");
 		goto out_free;
 	}
-#ifdef KERNEL_VERSION_4_X
-	result = devm_iio_device_register(st->dev, indio_dev);
-	if (result) {
-		pr_err("IIO device register fail\n");
-		goto out_unreg_ring;
-	}
-#else
-	result = iio_buffer_register(indio_dev, indio_dev->channels,
-				     indio_dev->num_channels);
-	if (result) {
-		pr_err("ring buffer register fail\n");
-		goto out_unreg_ring;
-	}
 
 	result = iio_device_register(indio_dev);
 	if (result) {
 		pr_err("IIO device register fail\n");
-		goto out_remove_ring;
+		goto out_unreg_ring;
 	}
-#endif
 
 	result = inv_create_dmp_sysfs(indio_dev);
 	if (result) {
@@ -261,7 +234,12 @@ static int inv_mpu_probe(struct spi_device *spi)
 #ifdef CONFIG_HAS_WAKELOCK
 	wake_lock_init(&st->wake_lock, WAKE_LOCK_SUSPEND, "inv_mpu");
 #else
-	wakeup_source_init(&st->wake_lock, "inv_mpu");
+	st->wake_lock = wakeup_source_create("inv_mpu");
+	wakeup_source_add(st->wake_lock);
+	if (st->wake_lock)
+		pr_info("wakeup_source is created successfully\n");
+	else
+		pr_info("failed to create wakeup_source\n");
 #endif
 	dev_info(st->dev, "%s ma-kernel-%s is ready to go!\n",
 	         indio_dev->name, INVENSENSE_DRIVER_VERSION);
@@ -276,28 +254,16 @@ static int inv_mpu_probe(struct spi_device *spi)
 #endif
 
 	return 0;
-#ifdef KERNEL_VERSION_4_X
-out_unreg_iio:
-	devm_iio_device_unregister(st->dev, indio_dev);
-out_unreg_ring:
-	inv_mpu_unconfigure_ring(indio_dev);
-out_free:
-	devm_iio_device_free(st->dev, indio_dev);
-out_no_free:
-#else
+
 out_unreg_iio:
 	iio_device_unregister(indio_dev);
-out_remove_ring:
-	iio_buffer_unregister(indio_dev);
 out_unreg_ring:
 	inv_mpu_unconfigure_ring(indio_dev);
 out_free:
 	iio_device_free(indio_dev);
 out_no_free:
-#endif
-	dev_err(st->dev, "%s failed %d\n", __func__, result);
-
-	return -EIO;
+	dev_err(&spi->dev, "%s failed %d\n", __func__, result);
+	return result;
 }
 
 static void inv_mpu_shutdown(struct spi_device *spi)
@@ -311,7 +277,11 @@ static void inv_mpu_shutdown(struct spi_device *spi)
 	dev_dbg(st->dev, "Shutting down %s...\n", st->hw->name);
 
 	/* reset to make sure previous state are not there */
+#if defined(CONFIG_INV_MPU_IIO_ICM42600)
+	result = inv_plat_single_write(st, REG_CHIP_CONFIG_REG, BIT_SOFT_RESET);
+#else
 	result = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_H_RESET);
+#endif
 	if (result)
 		dev_err(st->dev, "Failed to reset %s\n",
 			st->hw->name);
@@ -333,18 +303,13 @@ static int inv_mpu_remove(struct spi_device *spi)
 	struct iio_dev *indio_dev = spi_get_drvdata(spi);
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 
-#ifdef KERNEL_VERSION_4_X
-	devm_iio_device_unregister(st->dev, indio_dev);
-#else
+#ifndef CONFIG_HAS_WAKELOCK
+	if (st->wake_lock)
+		wakeup_source_destroy(st->wake_lock);
+#endif
 	iio_device_unregister(indio_dev);
-	iio_buffer_unregister(indio_dev);
-#endif
 	inv_mpu_unconfigure_ring(indio_dev);
-#ifdef KERNEL_VERSION_4_X
-	devm_iio_device_free(st->dev, indio_dev);
-#else
 	iio_device_free(indio_dev);
-#endif
 	dev_info(st->dev, "inv-mpu-iio module removed.\n");
 
 	return 0;
@@ -378,19 +343,49 @@ static const struct dev_pm_ops inv_mpu_spi_pmops = {
  */
 static const struct spi_device_id inv_mpu_id[] = {
 #ifdef CONFIG_INV_MPU_IIO_ICM20648
-	{"icm20645", ICM20645},
-	{"icm10340", ICM10340},
 	{"icm20648", ICM20648},
 #else
 	{"icm20608d", ICM20608D},
 	{"icm20690", ICM20690},
 	{"icm20602", ICM20602},
 	{"iam20680", IAM20680},
+	{"icm42600", ICM42600},
+	{"icm42686", ICM42686},
 #endif
 	{}
 };
-
 MODULE_DEVICE_TABLE(spi, inv_mpu_id);
+
+static const struct of_device_id inv_mpu_of_match[] = {
+#ifdef CONFIG_INV_MPU_IIO_ICM20648
+	{
+		.compatible = "invensense,icm20648",
+		.data = (void *)ICM20648,
+	},
+#else
+	{
+		.compatible = "invensense,icm20608d",
+		.data = (void *)ICM20608D,
+	}, {
+		.compatible = "invensense,icm20690",
+		.data = (void *)ICM20690,
+	}, {
+		.compatible = "invensense,icm20602",
+		.data = (void *)ICM20602,
+	}, {
+		.compatible = "invensense,iam20680",
+		.data = (void *)IAM20680,
+	}, {
+		.compatible = "invensense,icm42600",
+		.data = (void *)ICM42600,
+	}, {
+		.compatible = "invensense,icm42686",
+		.data = (void *)ICM42686,
+	},
+#endif
+	{ }
+};
+MODULE_DEVICE_TABLE(of, inv_mpu_of_match);
 
 static struct spi_driver inv_mpu_driver = {
 	.probe = inv_mpu_probe,
@@ -399,6 +394,7 @@ static struct spi_driver inv_mpu_driver = {
 	.id_table = inv_mpu_id,
 	.driver = {
 		.owner = THIS_MODULE,
+		.of_match_table = inv_mpu_of_match,
 		.name = "inv-mpu-iio-spi",
 		.pm = &inv_mpu_spi_pmops,
 	},

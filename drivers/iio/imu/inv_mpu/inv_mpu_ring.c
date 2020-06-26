@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2012-2018 InvenSense, Inc.
+* Copyright (C) 2012-2019 InvenSense, Inc.
 *
 * This software is licensed under the terms of the GNU General Public
 * License version 2, as published by the Free Software Foundation, and
@@ -25,7 +25,10 @@
 #include <linux/kfifo.h>
 #include <linux/poll.h>
 #include <linux/math64.h>
-#include <linux/miscdevice.h>
+#include <linux/iio/iio.h>
+#include <linux/iio/buffer.h>
+#include <linux/iio/trigger.h>
+#include <linux/iio/triggered_buffer.h>
 
 #include "inv_mpu_iio.h"
 
@@ -53,6 +56,7 @@ int inv_push_marker_to_buffer(struct inv_mpu_state *st, u16 hdr, int data)
 
 	return 0;
 }
+
 static int inv_calc_precision(struct inv_mpu_state *st)
 {
 	int diff;
@@ -66,7 +70,7 @@ static int inv_calc_precision(struct inv_mpu_state *st)
 		init = st->sensor[SENSOR_GYRO].dur / diff;
 
 	if (abs(init - NSEC_PER_USEC) < (NSEC_PER_USEC >> 3))
-		 st->eis.count_precision = init;
+		st->eis.count_precision = init;
 	else
 		st->eis.voting_state = 0;
 
@@ -315,23 +319,6 @@ int inv_push_special_8bytes_buffer(struct inv_mpu_state *st,
 	return 0;
 }
 
-static int inv_s16_gyro_push(struct inv_mpu_state *st, int i, s16 *raw, u64 t)
-{
-	if (st->sensor_l[i].on) {
-		st->sensor_l[i].counter++;
-		if ((st->sensor_l[i].div != 0xffff) &&
-			(st->sensor_l[i].counter >= st->sensor_l[i].div)) {
-			inv_push_special_8bytes_buffer(st,
-					st->sensor_l[i].header, t, raw);
-			st->sensor_l[i].counter = 0;
-			if (st->sensor_l[i].wake_on)
-				st->wake_sensor_received = true;
-		}
-	}
-
-	return 0;
-}
-
 static int inv_s32_gyro_push(struct inv_mpu_state *st, int i, s32 *calib, u64 t)
 {
 	if (st->sensor_l[i].on) {
@@ -348,7 +335,7 @@ static int inv_s32_gyro_push(struct inv_mpu_state *st, int i, s32 *calib, u64 t)
 	return 0;
 }
 
-int inv_push_gyro_data(struct inv_mpu_state *st, s16 *raw, s32 *calib, u64 t)
+int inv_push_gyro_data(struct inv_mpu_state *st, s32 *raw, s32 *calib, u64 t)
 {
 	int gyro_data[] = {SENSOR_L_GYRO, SENSOR_L_GYRO_WAKE};
 	int calib_data[] = {SENSOR_L_GYRO_CAL, SENSOR_L_GYRO_CAL_WAKE};
@@ -358,7 +345,7 @@ int inv_push_gyro_data(struct inv_mpu_state *st, s16 *raw, s32 *calib, u64 t)
 		inv_push_eis_buffer(st, t, calib);
 
 	for (i = 0; i < 2; i++)
-		inv_s16_gyro_push(st, gyro_data[i], raw, t);
+		inv_s32_gyro_push(st, gyro_data[i], raw, t);
 	for (i = 0; i < 2; i++)
 		inv_s32_gyro_push(st, calib_data[i], calib, t);
 
@@ -371,7 +358,8 @@ int inv_push_8bytes_buffer(struct inv_mpu_state *st, u16 sensor, u64 t, s16 *d)
 	int ii, j;
 
 	if ((sensor == STEP_DETECTOR_HDR) ||
-					(sensor == STEP_DETECTOR_WAKE_HDR)) {
+		(sensor == STEP_DETECTOR_WAKE_HDR) ||
+		(sensor == TAP_HDR)) {
 		memcpy(buf, &sensor, sizeof(sensor));
 		memcpy(&buf[2], &d[0], sizeof(d[0]));
 		for (j = 0; j < 2; j++)
@@ -479,7 +467,12 @@ int inv_push_8bytes_kf(struct inv_mpu_state *st, u16 hdr, u64 t, s16 *d)
 		d[0], d[0] & 0x00FF,
 		inv_tilt_check(d[0] & 0x00FF),
 		(d[0] & 0xFF00) >> 8,  inv_tilt_check((d[0] & 0xFF00) >> 8));
-		sysfs_notify(&indio_dev->dev.kobj, NULL, "poll_tilt");
+		if (!((d[0] & 0x00FF) & TILT) &&
+				(((d[0] & 0xFF00) >> 8) & TILT)) {
+			/* Not Tilt to Tilt */
+			sysfs_notify(&indio_dev->dev.kobj, NULL, "poll_tilt");
+			st->wake_sensor_received = true; /* Tilt is wake-up */
+		}
 	}
 
 	pr_debug("d[0] = %04X,  [%X : %s] to [%X : %s]", d[0], d[0] & 0x00FF,
@@ -525,14 +518,6 @@ void inv_push_step_indicator(struct inv_mpu_state *st, u64 t)
 	inv_push_8bytes_buffer(st, STEP_INDICATOR_HEADER, t, sen);
 }
 
-/*
- *  inv_irq_handler() - Cache a timestamp at each data ready interrupt.
- */
-static irqreturn_t inv_irq_handler(int irq, void *dev_id)
-{
-	return IRQ_WAKE_THREAD;
-}
-
 #ifdef TIMER_BASED_BATCHING
 static enum hrtimer_restart inv_batch_timer_handler(struct hrtimer *timer)
 {
@@ -550,41 +535,20 @@ static enum hrtimer_restart inv_batch_timer_handler(struct hrtimer *timer)
 }
 #endif
 
-void inv_mpu_unconfigure_ring(struct iio_dev *indio_dev)
+static int inv_mpu_set_trigger(struct iio_trigger *trig, bool state)
 {
-	struct inv_mpu_state *st = iio_priv(indio_dev);
-#ifdef KERNEL_VERSION_4_X
-	devm_free_irq(st->dev, st->irq, st);
-	devm_iio_kfifo_free(st->dev, indio_dev->buffer);
-#else
-	free_irq(st->irq, st);
-	iio_kfifo_free(indio_dev->buffer);
-#endif
-};
-EXPORT_SYMBOL_GPL(inv_mpu_unconfigure_ring);
-
-#ifndef KERNEL_VERSION_4_X
-static int inv_predisable(struct iio_dev *indio_dev)
-{
+	/* unused for the moment */
 	return 0;
 }
 
-static int inv_preenable(struct iio_dev *indio_dev)
-{
-	return 0;
-}
-
-static const struct iio_buffer_setup_ops inv_mpu_ring_setup_ops = {
-	.preenable = &inv_preenable,
-	.predisable = &inv_predisable,
+static const struct iio_trigger_ops inv_mpu_trigger_ops = {
+	.set_trigger_state = &inv_mpu_set_trigger,
 };
-#endif
 
 int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 {
 	int ret;
 	struct inv_mpu_state *st = iio_priv(indio_dev);
-	struct iio_buffer *ring;
 
 #ifdef TIMER_BASED_BATCHING
 	/* configure hrtimer */
@@ -592,52 +556,58 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 	st->hr_batch_timer.function = inv_batch_timer_handler;
 	INIT_WORK(&st->batch_work, inv_batch_work);
 #endif
-#ifdef KERNEL_VERSION_4_X
-	ring = devm_iio_kfifo_allocate(st->dev);
-	if (!ring)
-		return -ENOMEM;
-	ring->scan_timestamp = true;
-	iio_device_attach_buffer(indio_dev, ring);
-	ret = devm_request_threaded_irq(st->dev,
-		st->irq,
-		inv_irq_handler,
-		inv_read_fifo,
-		IRQF_TRIGGER_RISING | IRQF_SHARED,
-		"inv_irq",
-		st);
+
+	ret = iio_triggered_buffer_setup(indio_dev, NULL, inv_read_fifo, NULL);
 	if (ret) {
-		devm_iio_kfifo_free(st->dev, ring);
+		dev_err(st->dev, "iio triggered buffer failed %d\n", ret);
 		return ret;
 	}
 
-	// this mode does not use ops
-	indio_dev->modes = INDIO_ALL_BUFFER_MODES;
+	st->trig = iio_trigger_alloc("%s-dev%d", indio_dev->name,
+				     indio_dev->id);
+	if (st->trig == NULL) {
+		ret = -ENOMEM;
+		dev_err(st->dev, "iio trigger alloc error\n");
+		goto error_free_buffer;
+	}
+	st->trig->dev.parent = st->dev;
+	st->trig->ops = &inv_mpu_trigger_ops;
+	iio_trigger_set_drvdata(st->trig, indio_dev);
 
-	return ret;
-#else
-	ring = iio_kfifo_allocate(indio_dev);
-	if (!ring)
-		return -ENOMEM;
-	indio_dev->buffer = ring;
-	/* setup ring buffer */
-	ring->scan_timestamp = true;
-	indio_dev->setup_ops = &inv_mpu_ring_setup_ops;
-	ret = request_threaded_irq(st->irq,
-			inv_irq_handler,
-			inv_read_fifo,
-			IRQF_TRIGGER_RISING | IRQF_SHARED,
-			"inv_irq",
-			st);
-	if (ret)
-		goto error_iio_sw_rb_free;
+	ret = request_irq(st->irq, &iio_trigger_generic_data_rdy_poll,
+			  IRQF_TRIGGER_RISING, "inv_mpu", st->trig);
+	if (ret) {
+		dev_err(st->dev, "irq request error %d\n", ret);
+		goto error_free_trigger;
+	}
 
-	indio_dev->modes |= INDIO_BUFFER_HARDWARE;
+	ret = iio_trigger_register(st->trig);
+	if (ret) {
+		dev_err(st->dev, "iio trigger register error %d\n", ret);
+		goto error_free_irq;
+	}
+	iio_trigger_get(st->trig);
+	indio_dev->trig = st->trig;
 
 	return 0;
-error_iio_sw_rb_free:
-	iio_kfifo_free(indio_dev->buffer);
 
+error_free_irq:
+	free_irq(st->irq, st->trig);
+error_free_trigger:
+	iio_trigger_free(st->trig);
+error_free_buffer:
+	iio_triggered_buffer_cleanup(indio_dev);
 	return ret;
-#endif
 }
 EXPORT_SYMBOL_GPL(inv_mpu_configure_ring);
+
+void inv_mpu_unconfigure_ring(struct iio_dev *indio_dev)
+{
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+
+	iio_trigger_unregister(st->trig);
+	free_irq(st->irq, st->trig);
+	iio_trigger_free(st->trig);
+	iio_triggered_buffer_cleanup(indio_dev);
+};
+EXPORT_SYMBOL_GPL(inv_mpu_unconfigure_ring);

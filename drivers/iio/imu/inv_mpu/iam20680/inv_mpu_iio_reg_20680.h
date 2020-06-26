@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 InvenSense, Inc.
+ * Copyright (C) 2017-2019 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -17,7 +17,7 @@
 /* Uncomment when HAL does not support the algorithm library
  * for calibration and sensor fusion not to expose unused
  * sysfs entries */
-#define SUPPORT_ONLY_BASIC_FEATURES
+// #define SUPPORT_ONLY_BASIC_FEATURES
 
 /* Uncomment to read data registers for sensor data instead of FIFO */
 //#define SENSOR_DATA_FROM_REGISTERS
@@ -215,9 +215,6 @@ enum inv_filter_e {
 #define TEMPERATURE_SCALE  3340827L
 #define TEMPERATURE_OFFSET 1376256L
 #define SECONDARY_INIT_WAIT 100
-#define MPU_SOFT_REV_ADDR               0x86
-#define MPU_SOFT_REV_MASK               0xf
-#define SW_REV_LP_EN_MODE               4
 
 /* data limit definitions */
 #define MIN_FIFO_RATE            4
@@ -228,9 +225,12 @@ enum inv_filter_e {
 
 enum inv_devices {
 	ICM20608D,
+	ICM20789,
 	ICM20690,
 	ICM20602,
 	IAM20680,
+	ICM42600,
+	ICM42686,
 	INV_NUM_PARTS,
 };
 #endif

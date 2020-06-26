@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2018 InvenSense, Inc.
+ * Copyright (C) 2012-2019 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -13,11 +13,6 @@
 
 #ifndef _INV_MPU_IIO_H_
 #define _INV_MPU_IIO_H_
-
-#include <linux/version.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,0,0))
-#define KERNEL_VERSION_4_X
-#endif
 
 #include <linux/i2c.h>
 #include <linux/kfifo.h>
@@ -34,9 +29,11 @@
 #endif
 #include <linux/wait.h>
 
-#include <linux/iio/sysfs.h>
 #include <linux/iio/iio.h>
-#include <linux/iio/kfifo_buf.h>
+#include <linux/iio/buffer.h>
+#include <linux/iio/sysfs.h>
+#include <linux/iio/trigger.h>
+#include <linux/iio/trigger_consumer.h>
 
 #ifdef CONFIG_INV_MPU_IIO_ICM20648
 #include "icm20648/dmp3Default.h"
@@ -44,8 +41,6 @@
 #ifdef CONFIG_INV_MPU_IIO_ICM20608D
 #include "icm20608d/dmp3Default_20608D.h"
 #endif
-
-#include "inv_test/inv_counters.h"
 
 #if defined(CONFIG_INV_MPU_IIO_ICM20648)
 #include "icm20648/inv_mpu_iio_reg_20648.h"
@@ -57,9 +52,11 @@
 #include "icm20690/inv_mpu_iio_reg_20690.h"
 #elif defined(CONFIG_INV_MPU_IIO_IAM20680)
 #include "iam20680/inv_mpu_iio_reg_20680.h"
+#elif defined(CONFIG_INV_MPU_IIO_ICM42600)
+#include "icm42600/inv_mpu_iio_reg_42600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"8.1.2-simple-test1"
+#define INVENSENSE_DRIVER_VERSION		"9.1.5-test1"
 
 /* #define DEBUG */
 
@@ -97,6 +94,7 @@
 #define EIS_GYRO_HDR             36
 #define EIS_CALIB_HDR            37
 #define LPQ_HDR                  38
+#define TAP_HDR                  40
 
 #define ACCEL_WAKE_HDR           (ACCEL_HDR | WAKE_HDR)
 #define GYRO_WAKE_HDR            (GYRO_HDR | WAKE_HDR)
@@ -111,22 +109,29 @@
 #define COMPASS_CALIB_WAKE_HDR   (COMPASS_CALIB_HDR | WAKE_HDR)
 #define STEP_COUNTER_WAKE_HDR    (STEP_COUNTER_HDR | WAKE_HDR)
 #define STEP_DETECTOR_WAKE_HDR   (STEP_DETECTOR_HDR | WAKE_HDR)
+#define TAP_WAKE_HDR             (TAP_HDR | WAKE_HDR)
 
 /* init parameters */
 #define MPU_INIT_SMD_THLD        1500
+/* default FSR for gyro
+ * note: 4000dps is supported only by icm42686.
+ * 0:250dps, 1:500dps, 2:1000dps, 3:2000dps, 4:4000dps
+ */
 #define MPU_INIT_GYRO_SCALE      3
-#define MPU_INIT_ACCEL_SCALE     2
+/* default FSR for accel
+ * note: 32g is supported by only by icm42686. 2g is not supported by icm42686.
+ * 0:2g, 1:4g, 2:8g, 3:16g, 4:32g
+ */
+#define MPU_INIT_ACCEL_SCALE     1
 #define MPU_INIT_PED_INT_THRESH  2
 #define MPU_INIT_PED_STEP_THRESH 6
 #define MPU_4X_TS_GYRO_SHIFT      (3160000 / 2)
-#define DMP_START_ADDR_20645     0x900
 #define DMP_START_ADDR_20648     0x1000
-#define DMP_START_ADDR_10340     0x0a60
 #define DMP_START_ADDR_20608D    0x4B0
-#define MAX_WR_SZ                  100
+#define MAX_WR_SZ                PAGE_SIZE
 #define WOM_DELAY_THRESHOLD      200
+#define STATIONARY_DELAY_THRESHOLD 12000 /* 60s */
 #define INV_ODR_BUFFER_MULTI     20
-#define INV_ODR_OVER_FACTOR      20
 
 #define COVARIANCE_SIZE          14
 #define ACCEL_COVARIANCE_SIZE  (COVARIANCE_SIZE * sizeof(int))
@@ -335,6 +340,9 @@ struct inv_batch {
  *  @step_indicator_on: step indicate bit added to the sensor or not.
  *  @tilt_enable: tilt enable.
  *  @pick_up_enable: pick up gesture enable.
+ *  @tap_enable: tap gesture enable.
+ *  @stationary_detect_enable: stationary detect enable.
+ *  @motion_detect_enable: motion detect enable.
  *  @step_detector_on:  step detector on or not.
  *  @activity_on: turn on/off activity.
  *  @activity_eng_on: activity engine on/off.
@@ -342,11 +350,12 @@ struct inv_batch {
  *  @low_power_gyro_on: flag indicating low power gyro on/off.
  *  @wake_on: any wake on sensor is on/off.
  *  @compass_rate:    compass engine rate. Determined by underlying data.
+ *  @high_res_mode: high resolution mode on/off.
  */
 struct inv_chip_config_s {
-	u32 fsr:2;
+	u32 fsr:3;
 	u32 lpf:3;
-	u32 accel_fs:2;
+	u32 accel_fs:3;
 	u32 accel_enable:1;
 	u32 gyro_enable:1;
 	u32 compass_enable:1;
@@ -370,6 +379,9 @@ struct inv_chip_config_s {
 	u32 step_indicator_on:1;
 	u32 tilt_enable:1;
 	u32 pick_up_enable:1;
+	u32 tap_enable:1;
+	u32 stationary_detect_enable:1;
+	u32 motion_detect_enable:1;
 	u32 eis_enable:1;
 	u32 step_detector_on:1;
 	u32 activity_on:1;
@@ -378,6 +390,7 @@ struct inv_chip_config_s {
 	u32 low_power_gyro_on:1;
 	u32 wake_on:1;
 	int compass_rate;
+	u32 high_res_mode:1;
 };
 
 /**
@@ -442,6 +455,7 @@ struct inv_smd {
  * @step_thresh: step threshold to show steps.
  * @int_thresh: step threshold to generate interrupt.
  * @int_on:   pedometer interrupt enable/disable.
+ * @int_mode: select the trigger to read step count from DMP, int or poll.
  * @on:  pedometer on/off.
  * @engine_on: pedometer engine on/off.
  */
@@ -452,6 +466,7 @@ struct inv_ped {
 	u16 step_thresh;
 	u16 int_thresh;
 	bool int_on;
+	bool int_mode;
 	bool on;
 	bool engine_on;
 };
@@ -529,6 +544,7 @@ struct inv_secondary_set {
  *  struct inv_engine_info - data structure for engines.
  *  @base_time: base time for each engine.
  *  @base_time_1k: base time when chip is running at 1K;
+ *  @base_time_vr: base time when chip is running in VR mode(500Hz);
  *  @divider: divider used to downsample engine rate from original rate.
  *  @running_rate: the actually running rate of engine.
  *  @orig_rate: original rate for each engine before downsample.
@@ -538,6 +554,7 @@ struct inv_secondary_set {
 struct inv_engine_info {
 	u32 base_time;
 	u32 base_time_1k;
+	u32 base_time_vr;
 	u32 divider;
 	u32 running_rate;
 	u32 orig_rate;
@@ -560,10 +577,11 @@ struct inv_ois {
  *  @start_dmp_counter: dmp counter when start a new session.
  *  @calib_counter: calibration counter for timestamp.
  *  @resume_flag: flag to indicate this is the first time after resume. time
-                 could have up to 1 seconds difference.
+ *				could have up to 1 seconds difference.
  *  @clock_base: clock base to calculate the timestamp.
  *  @gyro_ts_shift: 9 K counter for EIS.
  *  @first_sample: first of 1K running should be dropped it affects timing
+ *  @first_drop_samples: the number of first samples to be dropped
  */
 struct inv_timestamp_algo {
 	u64 last_run_time;
@@ -576,12 +594,29 @@ struct inv_timestamp_algo {
 	enum INV_ENGINE clock_base;
 	u32 gyro_ts_shift;
 	u32 first_sample;
+	u32 first_drop_samples[SENSOR_NUM_MAX];
 };
+
+#ifdef CONFIG_INV_MPU_IIO_ICM42600
+/**
+ *	struct inv_apex_data - apex gesture algo data .
+ *	@step_cnt_total: step count total.
+ *	@step_cnt_last_val: previous step count value from chip.
+ *	@step_reset_last_val: check if it is first time after step count reset.
+ */
+struct inv_apex_data {
+	uint32_t step_cnt_total;
+	uint32_t step_cnt_last_val;
+	bool step_reset_last_val;
+};
+#endif
 
 struct inv_mpu_slave;
 /**
  *  struct inv_mpu_state - Driver state variables.
  *  @dev:               device address of the current bus, i2c or spi.
+ *  @aux_dev:           device connected on auxiliary i2c bus with bypass mode.
+ *  @trig:		iio trigger device.
  *  @chip_config:	Cached attribute information.
  *  @chip_info:		Chip information from read-only registers.
  *  @smd:               SMD data structure.
@@ -612,11 +647,15 @@ struct inv_mpu_slave;
  *  @accel_st_bias:     accel bias store, result of self-test.
  *  @gyro_st_bias:      gyro bias store, result of self-test.
  *  @gyro_ois_st_bias:  gyro bias store from ois self test result.
+ *  @gyro_lp_mode:  gyro low power mode on/off.
+ *  @accel_lp_mode:  accel low power mode on/off.
  *  @input_accel_dmp_bias[3]: accel bias for dmp.
  *  @input_gyro_dmp_bias[3]: gyro bias for dmp.
  *  @input_compass_dmp_bias[3]: compass bias for dmp.
  *  @input_accel_bias[3]: accel bias for offset register.
  *  @input_gyro_bias[3]: gyro bias for offset register.
+ *  @org_accel_offset_reg[3]: accel offset register original values.
+ *  @org_gyro_offset_reg[3]: gyro offset register original values.
  *  @fifo_data[8]: fifo data storage.
  *  @i2c_addr:          i2c address.
  *  @header_count:      header count in current FIFO.
@@ -632,6 +671,7 @@ struct inv_mpu_slave;
  *  @debug_determine_engine_on: determine engine on/off.
  *  @poke_mode_on: poke mode on/off.
  *  @mode_1k_on: indicate 1K Hz mode is on.
+ *  @mode_vr_on: indicates VR mode (500 Hz) is on
  *  @poke_ts: time stamp for poke feature.
  *  @step_detector_base_ts: base time stamp for step detector calculation.
  *  @last_temp_comp_time: last time temperature compensation is done.
@@ -653,6 +693,7 @@ struct inv_mpu_slave;
  *  @cntl: control word for sensor enable.
  *  @cntl2: control word for sensor extension.
  *  @motion_event_cntl: control word for events.
+ *  @intr_cntl: control word for fifo interrupt.
  *  @dmp_image_size: dmp image size.
  *  @dmp_start_address: start address of dmp.
  *  @step_counter_l_on: step counter android L sensor on/off.
@@ -661,11 +702,12 @@ struct inv_mpu_slave;
  *  @step_detector_wake_l_on: step detector android L sensor wake on/off .
  *  @gesture_only_on: indicate it is gesture only.
  *  @mag_divider: mag divider when gyro/accel is faster than mag maximum rate.
- *  @special_mag_mode: for 20690, there is special mag mode need to be handled.
- *  @mag_start_flag: when mag divider is non zero, need to check the start.
+ *  @mag_first_drop_cnt: mag sample counter to be dropped after enable.
  *  @prev_steps: previous steps sent to the user.
  *  @aut_key_in: authentication key input.
  *  @aut_key_out: authentication key output.
+ *  @auth_i: authentication data input
+ *  @auth_o: authentication data output
  *  @suspend_state: state variable to indicate that we are in suspend state.
  *  @secondary_gyro_on: DMP out signal to turn on gyro.
  *  @secondary_mag_on:  DMP out signal to turn on mag.
@@ -694,12 +736,14 @@ struct inv_mpu_slave;
  */
 struct inv_mpu_state {
 	struct device *dev;
+	struct i2c_client *aux_dev;
+	struct iio_trigger *trig;
 	int (*write)(struct inv_mpu_state *st, u8 reg, u8 data);
 	int (*read)(struct inv_mpu_state *st, u8 reg, int len, u8 *data);
 	int (*mem_write)(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
-	                 u32 len, u8 const *data);
+			u32 len, u8 const *data);
 	int (*mem_read)(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
-	                u32 len, u8 *data);
+			u32 len, u8 *data);
 	struct inv_chip_config_s chip_config;
 	struct inv_chip_info_s chip_info;
 	struct inv_smd smd;
@@ -712,6 +756,9 @@ struct inv_mpu_state {
 	struct inv_mpu_slave *slave_als;
 	struct inv_secondary_reg slv_reg[4];
 	struct inv_timestamp_algo ts_algo;
+#ifdef CONFIG_INV_MPU_IIO_ICM42600
+	struct inv_apex_data apex_data;
+#endif
 	struct inv_secondary_set sec_set;
 	struct inv_engine_info eng_info[ENGINE_NUM_MAX];
 	const struct inv_hw_s *hw;
@@ -721,7 +768,7 @@ struct inv_mpu_state {
 #ifdef CONFIG_HAS_WAKELOCK
 	struct wake_lock wake_lock;
 #else
-	struct wakeup_source wake_lock;
+	struct wakeup_source *wake_lock;
 #endif
 #ifdef TIMER_BASED_BATCHING
 	struct hrtimer hr_batch_timer;
@@ -744,11 +791,15 @@ struct inv_mpu_state {
 	int accel_ois_st_bias[3];
 	int gyro_st_bias[3];
 	int gyro_ois_st_bias[3];
+	int gyro_lp_mode;
+	int accel_lp_mode;
 	int input_accel_dmp_bias[3];
 	int input_gyro_dmp_bias[3];
 	int input_compass_dmp_bias[3];
 	int input_accel_bias[3];
 	int input_gyro_bias[3];
+	s16 org_accel_offset_reg[3];
+	s16 org_gyro_offset_reg[3];
 	u8 fifo_data[8];
 	u8 i2c_addr;
 	int header_count;
@@ -764,6 +815,7 @@ struct inv_mpu_state {
 	bool debug_determine_engine_on;
 	bool poke_mode_on;
 	bool mode_1k_on;
+	bool mode_vr_on;
 	u64 poke_ts;
 	u64 step_detector_base_ts;
 	u64 last_temp_comp_time;
@@ -786,6 +838,7 @@ struct inv_mpu_state {
 	u16 cntl;
 	u16 cntl2;
 	u16 motion_event_cntl;
+	u16 intr_cntl;
 	int dmp_image_size;
 	int dmp_start_address;
 	bool step_counter_l_on;
@@ -793,13 +846,14 @@ struct inv_mpu_state {
 	bool step_detector_l_on;
 	bool step_detector_wake_l_on;
 	bool gesture_only_on;
-	bool mag_start_flag;
+	int mag_first_drop_cnt;
 	int mag_divider;
-	bool special_mag_mode;
 	int prev_steps;
 	u32 curr_steps;
 	int aut_key_in;
 	int aut_key_out;
+	u8 auth_i[256];
+	u8 auth_o[256];
 	bool secondary_gyro_on;
 	bool secondary_mag_on;
 	bool secondary_prox_on;
@@ -823,7 +877,8 @@ struct inv_mpu_state {
 	u8 fifo_data_store[HARDWARE_FIFO_SIZE + LEFT_OVER_BYTES];
 	u8 int_en;
 	u8 int_en_2;
-	u8 gesture_int_count;
+	u8 int_en_6;
+	int gesture_int_count;
 	u8 smplrt_div;
 };
 
@@ -853,17 +908,17 @@ struct inv_mpu_slave {
 	int scale;
 	int rate_scale;
 	int min_read_time;
-	int (*self_test) (struct inv_mpu_state *);
-	int (*set_scale) (struct inv_mpu_state *, int scale);
-	int (*get_scale) (struct inv_mpu_state *, int *val);
-	int (*suspend) (struct inv_mpu_state *);
-	int (*resume) (struct inv_mpu_state *);
-	int (*setup) (struct inv_mpu_state *);
-	int (*combine_data) (u8 *in, short *out);
-	int (*read_data) (struct inv_mpu_state *, short *out);
-	int (*get_mode) (void);
-	int (*set_lpf) (struct inv_mpu_state *, int rate);
-	int (*set_fs) (struct inv_mpu_state *, int fs);
+	int (*self_test)(struct inv_mpu_state *);
+	int (*set_scale)(struct inv_mpu_state *, int scale);
+	int (*get_scale)(struct inv_mpu_state *, int *val);
+	int (*suspend)(struct inv_mpu_state *);
+	int (*resume)(struct inv_mpu_state *);
+	int (*setup)(struct inv_mpu_state *);
+	int (*combine_data)(u8 *in, short *out);
+	int (*read_data)(struct inv_mpu_state *, short *out);
+	int (*get_mode)(void);
+	int (*set_lpf)(struct inv_mpu_state *, int rate);
+	int (*set_fs)(struct inv_mpu_state *, int fs);
 	u64 prev_ts;
 };
 
@@ -897,10 +952,14 @@ enum MPU_IIO_ATTR_ADDR {
 	ATTR_DMP_PED_INT_ON,
 	ATTR_DMP_PED_STEP_THRESH,
 	ATTR_DMP_PED_INT_THRESH,
+	ATTR_DMP_PED_INT_MODE,
 	ATTR_DMP_PED_ON,
 	ATTR_DMP_SMD_ENABLE,
 	ATTR_DMP_TILT_ENABLE,
 	ATTR_DMP_PICK_UP_ENABLE,
+	ATTR_DMP_TAP_ENABLE,
+	ATTR_DMP_STATIONARY_DETECT_ENABLE,
+	ATTR_DMP_MOTION_DETECT_ENABLE,
 	ATTR_DMP_EIS_ENABLE,
 	ATTR_DMP_PEDOMETER_STEPS,
 	ATTR_DMP_PEDOMETER_TIME,
@@ -917,10 +976,12 @@ enum MPU_IIO_ATTR_ADDR {
 	/* *****above this line, are DMP features, power needs on/off */
 	/* *****below this line, are DMP features, no power needed */
 	ATTR_IN_POWER_ON,
+	ATTR_HIGH_RES_MODE,
 	ATTR_DMP_ON,
 	ATTR_DMP_EVENT_INT_ON,
 	ATTR_DMP_STEP_COUNTER_ON,
 	ATTR_DMP_STEP_COUNTER_WAKE_ON,
+	ATTR_DMP_STEP_COUNTER_SEND,
 	ATTR_DMP_BATCHMODE_TIMEOUT,
 	ATTR_DMP_BATCHMODE_WAKE_FIFO_FULL,
 	ATTR_DMP_STEP_DETECTOR_ON,
@@ -956,6 +1017,8 @@ enum MPU_IIO_ATTR_ADDR {
 	ATTR_ANGLVEL_X_OIS_ST_CALIBBIAS,
 	ATTR_ANGLVEL_Y_OIS_ST_CALIBBIAS,
 	ATTR_ANGLVEL_Z_OIS_ST_CALIBBIAS,
+	ATTR_GYRO_LP_MODE,
+	ATTR_ACCEL_LP_MODE,
 	ATTR_ACCEL_X_ST_CALIBBIAS,
 	ATTR_ACCEL_Y_ST_CALIBBIAS,
 	ATTR_ACCEL_Z_ST_CALIBBIAS,
@@ -991,7 +1054,6 @@ void inv_mpu_complete(struct iio_dev *indio_dev);
 int inv_get_pedometer_steps(struct inv_mpu_state *st, int *ped);
 int inv_get_pedometer_time(struct inv_mpu_state *st, int *ped);
 int inv_read_pedometer_counter(struct inv_mpu_state *st);
-
 int inv_dmp_read(struct inv_mpu_state *st, int off, int size, u8 *buf);
 int inv_firmware_load(struct inv_mpu_state *st);
 
@@ -1002,6 +1064,7 @@ int inv_mpu_setup_pressure_slave(struct inv_mpu_state *st);
 int inv_mpu_setup_als_slave(struct inv_mpu_state *st);
 int inv_mpu_initialize(struct inv_mpu_state *st);
 int inv_set_accel_sf(struct inv_mpu_state *st);
+int inv_write_accel_sf(struct inv_mpu_state *st); /* to DMP */
 int inv_set_gyro_sf(struct inv_mpu_state *st);
 s64 get_time_ns(void);
 int inv_i2c_read_base(struct inv_mpu_state *st, u16 i, u8 r, u16 l, u8 *d);
@@ -1023,13 +1086,13 @@ int inv_reset_fifo(struct inv_mpu_state *st, bool turn_off);
 int inv_create_dmp_sysfs(struct iio_dev *ind);
 int inv_check_chip_type(struct iio_dev *indio_dev, const char *name);
 int inv_write_compass_matrix(struct inv_mpu_state *st, int *adj);
-irqreturn_t inv_read_fifo(int irq, void *dev_id);
+irqreturn_t inv_read_fifo(int irq, void *p);
 #ifdef TIMER_BASED_BATCHING
 void inv_batch_work(struct work_struct *work);
 #endif
 int inv_flush_batch_data(struct iio_dev *indio_dev, int data);
 static inline int mpu_memory_write(struct inv_mpu_state *st, u8 mpu_addr,
-                                   u16 mem_addr, u32 len, u8 const *data)
+		u16 mem_addr, u32 len, u8 const *data)
 {
 	int ret = -1;
 
@@ -1039,7 +1102,7 @@ static inline int mpu_memory_write(struct inv_mpu_state *st, u8 mpu_addr,
 	return ret;
 }
 static inline int mpu_memory_read(struct inv_mpu_state *st, u8 mpu_addr,
-                                  u16 mem_addr, u32 len, u8 *data)
+		u16 mem_addr, u32 len, u8 *data)
 {
 	int ret = -1;
 
@@ -1059,7 +1122,7 @@ int inv_execute_read_secondary(struct inv_mpu_state *st, int ind, int addr,
 
 int inv_push_16bytes_buffer(struct inv_mpu_state *st, u16 hdr,
 						u64 t, int *q, s16 accur);
-int inv_push_gyro_data(struct inv_mpu_state *st, s16 *raw, s32 *calib, u64 t);
+int inv_push_gyro_data(struct inv_mpu_state *st, s32 *raw, s32 *calib, u64 t);
 int inv_push_8bytes_buffer(struct inv_mpu_state *st, u16 hdr, u64 t, s16 *d);
 int inv_push_8bytes_kf(struct inv_mpu_state *st, u16 hdr, u64 t, s16 *d);
 
@@ -1117,10 +1180,11 @@ static inline int inv_plat_read(struct inv_mpu_state *st, u8 reg,
 
 	return ret;
 }
-irqreturn_t inv_read_fifo(int , void *);
 
 int inv_stop_interrupt(struct inv_mpu_state *st);
-int inv_reenable_interrupt(struct inv_mpu_state *st);
+int inv_restore_interrupt(struct inv_mpu_state *st);
+int inv_stop_stream_interrupt(struct inv_mpu_state *st);
+int inv_restore_stream_interrupt(struct inv_mpu_state *st);
 
 int inv_enable_pedometer_interrupt(struct inv_mpu_state *st, bool en);
 int inv_dataout_control1(struct inv_mpu_state *st, u16 cntl1);
@@ -1131,6 +1195,12 @@ int inv_motion_interrupt_control(struct inv_mpu_state *st,
 int inv_bound_timestamp(struct inv_mpu_state *st);
 int inv_update_dmp_ts(struct inv_mpu_state *st, int ind);
 int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st);
+int inv_set_accel_intel(struct inv_mpu_state *st);
+
+int inv_read_offset_regs(struct inv_mpu_state *st,
+		s16 accel[3], s16 gyro[3]);
+int inv_write_offset_regs(struct inv_mpu_state *st,
+		const s16 accel[3], const s16 gyro[3]);
 
 #define mem_w(a, b, c) mpu_memory_write(st, st->i2c_addr, a, b, c)
 #define mem_r(a, b, c) mpu_memory_read(st, st->i2c_addr, a, b, c)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2017 InvenSense, Inc.
+ * Copyright (C) 2012-2019 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -16,6 +16,7 @@
 #include <linux/android_alarm.h>
 #endif
 #include <linux/export.h>
+#include <linux/version.h>
 
 #ifdef CONFIG_RTC_INTF_ALARM
 s64 get_time_ns(void)
@@ -37,16 +38,18 @@ s64 get_time_ns(void)
 #else
 s64 get_time_ns(void)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+	/* kernel ~4.18 */
 	struct timespec ts;
-
 	get_monotonic_boottime(&ts);
-
-	/* Workaround for some platform on which monotonic clock and
-	 * Android SystemClock has a gap.
-	 * Use ktime_to_timespec(alarm_get_elapsed_realtime()) instead of
-	 * get_monotonic_boottime() for these platform
-	 */
 	return timespec_to_ns(&ts);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 3, 0)
+	/* kernel 4.19~5.2 */
+	return ktime_get_boot_ns();
+#else
+	/* kernel 5.3~ */
+	return ktime_get_boottime_ns();
+#endif
 }
 
 #endif
@@ -56,12 +59,12 @@ int inv_get_3axis_average(s16 src[], s16 dst[], s16 reset)
 {
 #define BUFFER_SIZE 200
 	static s16 buffer[BUFFER_SIZE][3];
-	static s16 current_position = 0;
-	static s16 ready = 0;
-	int sum[3]= {0,};
+	static s16 current_position;
+	static s16 ready;
+	int sum[3] = {0,};
 	int i;
 
-	if(reset){
+	if (reset) {
 		current_position = 0;
 		ready = 0;
 	}
@@ -69,12 +72,12 @@ int inv_get_3axis_average(s16 src[], s16 dst[], s16 reset)
 	buffer[current_position][1] = src[1];
 	buffer[current_position][2] = src[2];
 	current_position++;
-	if(current_position == BUFFER_SIZE){
+	if (current_position == BUFFER_SIZE) {
 		ready = 1;
 		current_position = 0;
 	}
-	if(ready){
-		for(i = 0 ; i < BUFFER_SIZE ; i++){
+	if (ready) {
+		for (i = 0; i < BUFFER_SIZE; i++) {
 			sum[0] += buffer[i][0];
 			sum[1] += buffer[i][1];
 			sum[2] += buffer[i][2];
@@ -102,20 +105,23 @@ int inv_q30_mult(int a, int b)
 #if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
 					defined(CONFIG_INV_MPU_IIO_ICM20690)
 /* inv_read_secondary(): set secondary registers for reading.
-   The chip must be set as bank 3 before calling.
+ * ICM20648: The chip must be set as bank 3 before calling.
  */
 int inv_read_secondary(struct inv_mpu_state *st, int ind, int addr,
 		       int reg, int len)
 {
 	int result;
 
+	/* I2C address */
 	result = inv_plat_single_write(st, st->slv_reg[ind].addr,
 				       INV_MPU_BIT_I2C_READ | addr);
 	if (result)
 		return result;
+	/* Register address */
 	result = inv_plat_single_write(st, st->slv_reg[ind].reg, reg);
 	if (result)
 		return result;
+	/* Enable SLV channel */
 	result = inv_plat_single_write(st, st->slv_reg[ind].ctrl,
 				       INV_MPU_BIT_SLV_EN | len);
 
@@ -131,36 +137,51 @@ int inv_execute_read_secondary(struct inv_mpu_state *st, int ind, int addr,
 	result = inv_read_secondary(st, ind, addr, reg, len);
 	if (result)
 		return result;
+
 	inv_set_bank(st, BANK_SEL_0);
 	result = inv_plat_single_write(st, REG_USER_CTRL, st->i2c_dis |
 				       BIT_I2C_MST_EN);
+	if (result)
+		return result;
 	msleep(SECONDARY_INIT_WAIT);
 	result = inv_plat_single_write(st, REG_USER_CTRL, st->i2c_dis);
 	if (result)
 		return result;
 	result = inv_plat_read(st, REG_EXT_SLV_SENS_DATA_00, len, d);
+	if (result)
+		return result;
+
+	/* Disable SLV channel */
+	inv_set_bank(st, BANK_SEL_3);
+	result = inv_plat_single_write(st, st->slv_reg[ind].ctrl, 0);
+	inv_set_bank(st, BANK_SEL_0);
 
 	return result;
 }
 
 /* inv_write_secondary(): set secondary registers for writing.
-   The chip must be set as bank 3 before calling.
+ * ICM20648: The chip must be set as bank 3 before calling.
  */
 int inv_write_secondary(struct inv_mpu_state *st, int ind, int addr,
 			int reg, int v)
 {
 	int result;
 
+	/* I2C address */
 	result = inv_plat_single_write(st, st->slv_reg[ind].addr, addr);
 	if (result)
 		return result;
+	/* Register address */
 	result = inv_plat_single_write(st, st->slv_reg[ind].reg, reg);
 	if (result)
 		return result;
+	/* Output data */
+	result = inv_plat_single_write(st, st->slv_reg[ind].d0, v);
+	if (result)
+		return result;
+	/* Enable SLV channel */
 	result = inv_plat_single_write(st, st->slv_reg[ind].ctrl,
 				       INV_MPU_BIT_SLV_EN | 1);
-
-	result = inv_plat_single_write(st, st->slv_reg[ind].d0, v);
 
 	return result;
 }
@@ -174,11 +195,21 @@ int inv_execute_write_secondary(struct inv_mpu_state *st, int ind, int addr,
 	result = inv_write_secondary(st, ind, addr, reg, v);
 	if (result)
 		return result;
+
 	inv_set_bank(st, BANK_SEL_0);
 	result = inv_plat_single_write(st, REG_USER_CTRL, st->i2c_dis |
 				       BIT_I2C_MST_EN);
+	if (result)
+		return result;
 	msleep(SECONDARY_INIT_WAIT);
 	result = inv_plat_single_write(st, REG_USER_CTRL, st->i2c_dis);
+	if (result)
+		return result;
+
+	/* Disable SLV channel */
+	inv_set_bank(st, BANK_SEL_3);
+	result = inv_plat_single_write(st, st->slv_reg[ind].ctrl, 0);
+	inv_set_bank(st, BANK_SEL_0);
 
 	return result;
 }
@@ -230,6 +261,11 @@ int inv_write_cntl(struct inv_mpu_state *st, u16 wd, bool en, int cntl)
 
 int inv_set_power(struct inv_mpu_state *st, bool power_on)
 {
+#if defined(CONFIG_INV_MPU_IIO_ICM42600)
+	if ((!power_on) == st->chip_config.is_asleep)
+		return 0;
+	st->chip_config.is_asleep = !power_on;
+#else
 	u8 d;
 	int r;
 
@@ -245,91 +281,15 @@ int inv_set_power(struct inv_mpu_state *st, bool power_on)
 		return r;
 
 	if (power_on)
-		usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC);
+		usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
 
 	st->chip_config.is_asleep = !power_on;
+#endif
 
 	return 0;
 }
 EXPORT_SYMBOL_GPL(inv_set_power);
 
-int inv_stop_interrupt(struct inv_mpu_state *st)
-{
-	int res;
-#if defined(CONFIG_INV_MPU_IIO_ICM20648)
-	/* disable_irq_wake alone should work already. However,
-	   it might need system configuration change. From driver side,
-	   we will disable IRQ altogether for non-wakeup sensors. */
-	res = inv_plat_read(st, REG_INT_ENABLE, 1, &st->int_en);
-	if (res)
-		return res;
-	res = inv_plat_read(st, REG_INT_ENABLE_2, 1, &st->int_en_2);
-	if (res)
-		return res;
-	res = inv_plat_single_write(st, REG_INT_ENABLE, 0);
-	if (res)
-		return res;
-	res = inv_plat_single_write(st, REG_INT_ENABLE_2, 0);
-	if (res)
-		return res;
-#endif
-#if defined(CONFIG_INV_MPU_IIO_ICM20608D)
-	res = inv_plat_read(st, REG_INT_ENABLE, 1, &st->int_en);
-	if (res)
-		return res;
-	res = inv_plat_single_write(st, REG_INT_ENABLE, 0);
-	if (res)
-		return res;
-#endif
-#if defined(CONFIG_INV_MPU_IIO_ICM20602) \
-	|| defined(CONFIG_INV_MPU_IIO_ICM20690) \
-	|| defined(CONFIG_INV_MPU_IIO_IAM20680)	
-	res = inv_plat_read(st, REG_INT_ENABLE, 1, &st->int_en);
-	if (res)
-		return res;
-	res = inv_plat_single_write(st, REG_INT_ENABLE, 0);
-	if (res)
-		return res;
-#endif
-	return 0;
-}
-int inv_reenable_interrupt(struct inv_mpu_state *st)
-{
-	int res = 0;
-#if defined(CONFIG_INV_MPU_IIO_ICM20648)
-	res = inv_plat_single_write(st, REG_INT_ENABLE, st->int_en);
-	if (res)
-		return res;
-	res = inv_plat_single_write(st, REG_INT_ENABLE_2, st->int_en_2);
-	if (res)
-		return res;
-#elif defined(CONFIG_INV_MPU_IIO_ICM20608D)
-	res = inv_plat_single_write(st, REG_INT_ENABLE, st->int_en);
-	if (res)
-		return res;
-#endif
-#if defined(CONFIG_INV_MPU_IIO_ICM20602) \
-	|| defined(CONFIG_INV_MPU_IIO_ICM20690) \
-	|| defined(CONFIG_INV_MPU_IIO_IAM20680)	
-	res = inv_plat_single_write(st, REG_INT_ENABLE, st->int_en);
-	if (res)
-		return res;
-#endif
-	return res;
-}
-
-static int inv_lp_en_off_mode(struct inv_mpu_state *st, bool on)
-{
-	int r;
-
-	if (!st->chip_config.is_asleep)
-		return 0;
-
-	r = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_CLK_PLL);
-	st->chip_config.is_asleep = 0;
-
-	return r;
-}
 #ifdef CONFIG_INV_MPU_IIO_ICM20648
 static int inv_lp_en_on_mode(struct inv_mpu_state *st, bool on)
 {
@@ -344,6 +304,8 @@ static int inv_lp_en_on_mode(struct inv_mpu_state *st, bool on)
 	if ((!on) && (!st->eis.eis_triggered))
 		w |= BIT_LP_EN;
 	r = inv_plat_single_write(st, REG_PWR_MGMT_1, w);
+	if (on)
+		usleep_range(70, 100);
 	st->chip_config.is_asleep = 0;
 	st->chip_config.lp_en_set = (!on);
 	return r;
@@ -351,7 +313,7 @@ static int inv_lp_en_on_mode(struct inv_mpu_state *st, bool on)
 #endif
 #if defined(CONFIG_INV_MPU_IIO_ICM20602) \
 	|| defined(CONFIG_INV_MPU_IIO_ICM20690) \
-	|| defined(CONFIG_INV_MPU_IIO_IAM20680)	
+	|| defined(CONFIG_INV_MPU_IIO_IAM20680)
 int inv_set_accel_config2(struct inv_mpu_state *st, bool cycle_mode)
 {
 	int cycle_freq[] = {275, 192, 111, 59};
@@ -367,13 +329,93 @@ int inv_set_accel_config2(struct inv_mpu_state *st, bool cycle_mode)
 		rate = (st->eng_info[ENGINE_ACCEL].running_rate << 1);
 		i = ARRAY_SIZE(cycle_freq) - 1;
 		while (i > 0) {
-			if (rate < cycle_freq[i]) {
+			if (rate < cycle_freq[i])
 				break;
-			}
 			i--;
 		}
 		r = inv_plat_single_write(st, REG_ACCEL_CONFIG_2, v |
 								(i << 4) | 7);
+		if (r)
+			return r;
+		st->accel_lp_mode = 1;
+	} else {
+		rate = (st->eng_info[ENGINE_ACCEL].running_rate >> 1);
+		for (i = 1; i < ARRAY_SIZE(cont_freq); i++) {
+			if (rate >= cont_freq[i])
+				break;
+		}
+		if (i > 6)
+			i = 6;
+		r = inv_plat_single_write(st, REG_ACCEL_CONFIG_2, v | i);
+		if (r)
+			return r;
+		st->accel_lp_mode = 0;
+	}
+
+	return 0;
+}
+static int inv_lp_en_on_mode(struct inv_mpu_state *st, bool on)
+{
+	int r = 0;
+	bool cond_check;
+
+	if ((!st->chip_config.is_asleep) &&
+			((!on) == st->chip_config.lp_en_set))
+		return 0;
+
+	/* will set LP mode ? */
+	cond_check = (!on) && st->cycle_on;
+
+	/* wake up */
+	if (st->chip_config.is_asleep) {
+		r = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_CLK_PLL);
+		if (r)
+			return r;
+		usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
+		inv_set_accel_config2(st, false);
+		st->chip_config.is_asleep = 0;
+		st->chip_config.lp_en_set = false;
+	}
+
+	/* set power mode */
+	if (st->chip_config.lp_en_set && !cond_check) {
+		/* LP -> LN */
+		r = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_CLK_PLL);
+		if (r)
+			return r;
+		usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
+		inv_set_accel_config2(st, false);
+		st->chip_config.lp_en_set = false;
+	} else if (!st->chip_config.lp_en_set && cond_check) {
+		/* LN -> LP */
+		inv_set_accel_config2(st, true);
+		r = inv_plat_single_write(st, REG_PWR_MGMT_1,
+				BIT_CLK_PLL | BIT_LP_EN);
+		if (r)
+			return r;
+		usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
+		st->chip_config.lp_en_set = true;
+	}
+
+	return r;
+}
+#endif
+#ifdef CONFIG_INV_MPU_IIO_ICM20608D
+int inv_set_accel_config2(struct inv_mpu_state *st, bool cycle_mode)
+{
+	int cycle_freq[] = {442, 236, 122, 61};
+	int cont_freq[] = {219, 219, 99, 45, 22, 11, 6};
+	int i, r, rate;
+
+	if (cycle_mode) {
+		rate = (st->eng_info[ENGINE_ACCEL].running_rate << 1);
+		i = ARRAY_SIZE(cycle_freq) - 1;
+		while (i > 0) {
+			if (rate < cycle_freq[i])
+				break;
+			i--;
+		}
+		r = inv_plat_single_write(st, REG_ACCEL_CONFIG_2, (i << 4) | 7);
 		if (r)
 			return r;
 	} else {
@@ -384,7 +426,7 @@ int inv_set_accel_config2(struct inv_mpu_state *st, bool cycle_mode)
 		}
 		if (i > 6)
 			i = 6;
-		r = inv_plat_single_write(st, REG_ACCEL_CONFIG_2, v | i);
+		r = inv_plat_single_write(st, REG_ACCEL_CONFIG_2, i);
 		if (r)
 			return r;
 	}
@@ -397,71 +439,67 @@ static int inv_lp_en_on_mode(struct inv_mpu_state *st, bool on)
 	u8 w;
 	bool cond_check;
 
-	if ((!st->chip_config.is_asleep) &&
-					((!on) == st->chip_config.lp_en_set))
-		return 0;
-	cond_check = (!on) && st->cycle_on;
+	cond_check = (!on) && (!st->chip_config.eis_enable)
+					   && (!st->chip_config.gyro_enable);
 
 	w = BIT_CLK_PLL;
 	r = inv_plat_single_write(st, REG_PWR_MGMT_1, w);
-	if (cond_check) {
+	if (r)
+		return r;
+	usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
+	inv_set_accel_config2(st, cond_check);
+
+	if (cond_check)
 		w |= BIT_LP_EN;
-		inv_set_accel_config2(st, true);
-		st->chip_config.lp_en_set = true;
-		r = inv_plat_single_write(st, REG_PWR_MGMT_1, w);
-	} else {
-		inv_set_accel_config2(st, false);
-#ifdef CONFIG_INV_MPU_IIO_ICM20690
-		r = inv_plat_single_write(st, REG_PWR_MGMT_1, w | BIT_SLEEP);
-		if (r)
-			return r;
-#endif
-		st->chip_config.lp_en_set = false;
-		r = inv_plat_single_write(st, REG_PWR_MGMT_1, w);
-		msleep(10);
-	}
+	r = inv_plat_single_write(st, REG_PWR_MGMT_1, w);
 	st->chip_config.is_asleep = 0;
 
 	return r;
 }
 #endif
-#ifdef CONFIG_INV_MPU_IIO_ICM20608D
-static int inv_set_accel_config2(struct inv_mpu_state *st)
-{
-	int cont_freq[] = {219, 219, 99, 45, 22, 11, 6};
-	int dec2_cfg = 0;
-	int i, r, rate;
 
-	rate = (st->eng_info[ENGINE_ACCEL].running_rate << 1);
-	i = 0;
-	if (!st->chip_config.eis_enable){
-		while ((rate < cont_freq[i]) && (i < ARRAY_SIZE(cont_freq) - 1))
-			i++;
-		dec2_cfg = 2<<4; //4x
-	}
-	r = inv_plat_single_write(st, REG_ACCEL_CONFIG_2, i | dec2_cfg);
-	if (r)
-		return r;
+#if defined(CONFIG_INV_MPU_IIO_ICM42600)
+int inv_set_accel_config2(struct inv_mpu_state *st, bool on)
+{
+	/* dummy */
 	return 0;
 }
 static int inv_lp_en_on_mode(struct inv_mpu_state *st, bool on)
 {
-	int r = 0;
-	u8 w;
-
-	w = BIT_CLK_PLL;
-	if ((!on) && (!st->chip_config.eis_enable))
-		w |= BIT_LP_EN;
-	inv_set_accel_config2(st);
-	r = inv_plat_single_write(st, REG_PWR_MGMT_1, w);
-
-	return r;
+	/* dummy */
+	return 0;
 }
 #endif
+
+static int inv_lp_en_off_mode(struct inv_mpu_state *st, bool on)
+{
+	int r;
+
+	if (!st->chip_config.is_asleep)
+		return 0;
+
+#if !defined(CONFIG_INV_MPU_IIO_ICM42600)
+	r = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_CLK_PLL);
+	usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
+#endif
+	st->chip_config.is_asleep = 0;
+#if defined(CONFIG_INV_MPU_IIO_ICM20602) || \
+	defined(CONFIG_INV_MPU_IIO_ICM20690) || \
+	defined(CONFIG_INV_MPU_IIO_IAM20680) || \
+	defined(CONFIG_INV_MPU_IIO_ICM20608D)
+	inv_set_accel_config2(st, false);
+#endif
+	return r;
+}
+
 int inv_switch_power_in_lp(struct inv_mpu_state *st, bool on)
 {
 	int r;
 
+#if defined(CONFIG_INV_MPU_IIO_ICM42600)
+	/* nothing to do, dummy */
+	return 0;
+#endif
 	if (st->chip_config.lp_en_mode_off)
 		r = inv_lp_en_off_mode(st, on);
 	else
@@ -693,6 +731,33 @@ int inv_process_eis(struct inv_mpu_state *st, u16 delay)
 	return 0;
 }
 
+#if defined(CONFIG_INV_MPU_IIO_ICM42600)
+int inv_rate_convert(struct inv_mpu_state *st, int ind, int data)
+{
+	int out_hz;
+
+	if (data > 500)
+		out_hz = 1000;
+	else if (data > 200)
+		out_hz = 500;
+	else if (data > 100)
+		out_hz = 200;
+	else if (data > 50)
+		out_hz = 100;
+	else if (data > 25)
+		out_hz = 50;
+	else if (data > 12)
+		out_hz = 25;
+	else if (data > 6)
+		out_hz = 12;
+	else if (data > 3)
+		out_hz = 6;
+	else
+		out_hz = 3;
+
+	return out_hz;
+}
+#else
 int inv_rate_convert(struct inv_mpu_state *st, int ind, int data)
 {
 	int t, out, out1, out2;
@@ -715,6 +780,7 @@ int inv_rate_convert(struct inv_mpu_state *st, int ind, int data)
 
 	return out;
 }
+#endif
 
 static void inv_check_wake_non_wake(struct inv_mpu_state *st,
 			enum SENSOR_L wake, enum SENSOR_L non_wake)
@@ -724,7 +790,7 @@ static void inv_check_wake_non_wake(struct inv_mpu_state *st,
 	if (!st->sensor_l[wake].on && !st->sensor_l[non_wake].on)
 		return;
 
-	tmp_rate = MPU_INIT_SENSOR_RATE;
+	tmp_rate = 0;
 	if (st->sensor_l[wake].on)
 		tmp_rate = st->sensor_l[wake].rate;
 	if (st->sensor_l[non_wake].on)
@@ -743,34 +809,38 @@ static void inv_check_wake_non_wake_divider(struct inv_mpu_state *st,
 
 #if defined(CONFIG_INV_MPU_IIO_ICM20602) \
 	|| defined(CONFIG_INV_MPU_IIO_ICM20690) \
-	|| defined(CONFIG_INV_MPU_IIO_IAM20680)	
+	|| defined(CONFIG_INV_MPU_IIO_IAM20680)
 int inv_check_sensor_on(struct inv_mpu_state *st)
 {
-	int i, max_rate;
+	int max_rate;
+	int i;
 	enum SENSOR_L wake[] = {SENSOR_L_GYRO_WAKE, SENSOR_L_ACCEL_WAKE,
 					SENSOR_L_MAG_WAKE};
 	enum SENSOR_L non_wake[] = {SENSOR_L_GYRO, SENSOR_L_ACCEL,
 					SENSOR_L_MAG};
 
+	/* initialize rates */
 	st->sensor_l[SENSOR_L_GESTURE_ACCEL].rate = GESTURE_ACCEL_RATE;
 	for (i = 0; i < SENSOR_NUM_MAX; i++)
 		st->sensor[i].on = false;
+
 	for (i = 0; i < SENSOR_NUM_MAX; i++)
 		st->sensor[i].rate = MPU_INIT_SENSOR_RATE;
 
-	if ((st->step_detector_l_on
+	/* set GESTURE_ACCEL on to support gestures at HAL */
+	if (st->step_detector_l_on
 			|| st->step_detector_wake_l_on
 			|| st->step_counter_l_on
 			|| st->step_counter_wake_l_on
 			|| st->chip_config.pick_up_enable
-			|| st->chip_config.tilt_enable)
-			&& (!st->sensor_l[SENSOR_L_ACCEL].on)
-			&& (!st->sensor_l[SENSOR_L_ACCEL_WAKE].on))
+			|| st->chip_config.tilt_enable
+			|| st->chip_config.stationary_detect_enable
+			|| st->chip_config.motion_detect_enable)
 		st->sensor_l[SENSOR_L_GESTURE_ACCEL].on = true;
 	else
 		st->sensor_l[SENSOR_L_GESTURE_ACCEL].on = false;
 
-
+	/* set wake_on according to enabled sensors */
 	st->chip_config.wake_on = false;
 	for (i = 0; i < SENSOR_L_NUM_MAX; i++) {
 		if (st->sensor_l[i].on && st->sensor_l[i].rate) {
@@ -778,13 +848,31 @@ int inv_check_sensor_on(struct inv_mpu_state *st)
 			st->chip_config.wake_on |= st->sensor_l[i].wake_on;
 		}
 	}
+
+	/* only gesture accel is enabled? */
 	if (st->sensor_l[SENSOR_L_GESTURE_ACCEL].on &&
-				(!st->sensor[SENSOR_GYRO].on) &&
-				(!st->sensor[SENSOR_COMPASS].on))
+			(!st->sensor_l[SENSOR_L_ACCEL].on &&
+				!st->sensor_l[SENSOR_L_ACCEL_WAKE].on) &&
+			(!st->sensor[SENSOR_GYRO].on) &&
+			(!st->sensor[SENSOR_COMPASS].on))
 		st->gesture_only_on = true;
 	else
 		st->gesture_only_on = false;
 
+	/* update rate to user side for sensors which are affected by gesture */
+	if (st->sensor_l[SENSOR_L_GESTURE_ACCEL].on) {
+		for (i = 0; i < SENSOR_L_NUM_MAX; i++) {
+			if (st->sensor_l[i].on &&
+					st->sensor_l[SENSOR_L_GESTURE_ACCEL].base ==
+					st->sensor_l[i].base) {
+				st->sensor_l[i].rate =
+					max(st->sensor_l[i].rate,
+							st->sensor_l[SENSOR_L_GESTURE_ACCEL].rate);
+			}
+		}
+	}
+
+	/* set rate for each sensor */
 	for (i = 0; i < SENSOR_L_NUM_MAX; i++) {
 		if (st->sensor_l[i].on) {
 			st->sensor[st->sensor_l[i].base].rate =
@@ -797,20 +885,20 @@ int inv_check_sensor_on(struct inv_mpu_state *st)
 		max_rate = ESI_GYRO_RATE;
 		st->sensor_l[SENSOR_L_EIS_GYRO].rate = ESI_GYRO_RATE;
 	}
-
 	for (i = 0; i < SENSOR_NUM_MAX; i++) {
-		if (st->sensor[i].on) {
+		if (st->sensor[i].on)
 			max_rate = max(max_rate, st->sensor[i].rate);
-		}
 	}
 	for (i = 0; i < SENSOR_NUM_MAX; i++) {
-		if (st->sensor[i].on) {
+		if (st->sensor[i].on)
 			st->sensor[i].rate = max_rate;
-		}
 	}
+
+	/* set rate for corresponding wake-up and non wake-up sensors */
 	for (i = 0; i < ARRAY_SIZE(wake); i++)
 		inv_check_wake_non_wake(st, wake[i], non_wake[i]);
 
+	/* calculate decimation rate for each sensor */
 	for (i = 0; i < SENSOR_L_NUM_MAX; i++) {
 		if (st->sensor_l[i].on) {
 			if (st->sensor_l[i].rate)
@@ -823,18 +911,128 @@ int inv_check_sensor_on(struct inv_mpu_state *st)
 						i, st->sensor_l[i].div);
 		}
 	}
+
+	/* set decimation rate for corresponding wake-up and non wake-up sensors */
 	for (i = 0; i < ARRAY_SIZE(wake); i++)
 		inv_check_wake_non_wake_divider(st, wake[i], non_wake[i]);
 
+	return 0;
+}
+#elif defined(CONFIG_INV_MPU_IIO_ICM42600)
+int inv_check_sensor_on(struct inv_mpu_state *st)
+{
+	int i;
+	enum SENSOR_L wake[] = {SENSOR_L_GYRO_WAKE, SENSOR_L_ACCEL_WAKE,
+					SENSOR_L_MAG_WAKE};
+	enum SENSOR_L non_wake[] = {SENSOR_L_GYRO, SENSOR_L_ACCEL,
+					SENSOR_L_MAG};
+
+	/* initialize rates */
+	st->sensor_l[SENSOR_L_GESTURE_ACCEL].rate = GESTURE_ACCEL_RATE;
+	for (i = 0; i < SENSOR_NUM_MAX; i++)
+		st->sensor[i].on = false;
+
+#if defined(SUPPORT_ACCEL_LPM)
+	for (i = 0; i < SENSOR_NUM_MAX; i++)
+		st->sensor[i].rate = MPU_INIT_SENSOR_RATE_LPM;
+	st->sensor[SENSOR_GYRO].rate = MPU_INIT_SENSOR_RATE_LNM;
+#else
+	for (i = 0; i < SENSOR_NUM_MAX; i++)
+		st->sensor[i].rate = MPU_INIT_SENSOR_RATE_LNM;
+#endif /* SUPPORT_ACCEL_LPM */
+
+	/* set GESTURE_ACCEL on to support gestures at HAL */
+	if (st->chip_config.stationary_detect_enable
+			|| st->chip_config.motion_detect_enable)
+		st->sensor_l[SENSOR_L_GESTURE_ACCEL].on = true;
+	else
+		st->sensor_l[SENSOR_L_GESTURE_ACCEL].on = false;
+
+	/* set wake_on according to enabled sensors */
+	st->chip_config.wake_on = false;
+	for (i = 0; i < SENSOR_L_NUM_MAX; i++) {
+		if (st->sensor_l[i].on && st->sensor_l[i].rate) {
+			st->sensor[st->sensor_l[i].base].on = true;
+			st->chip_config.wake_on |= st->sensor_l[i].wake_on;
+		}
+	}
+	/* set wake_on when DMP/HW wake-up gestures are enabled */
 	if (st->step_detector_wake_l_on ||
 			st->step_counter_wake_l_on ||
 			st->chip_config.pick_up_enable ||
-			st->chip_config.tilt_enable)
+			st->chip_config.tilt_enable ||
+			st->chip_config.tap_enable)
 		st->chip_config.wake_on = true;
+
+	/* only gesture accel is enabled? */
+	if (st->sensor_l[SENSOR_L_GESTURE_ACCEL].on &&
+			(!st->sensor_l[SENSOR_L_ACCEL].on &&
+				!st->sensor_l[SENSOR_L_ACCEL_WAKE].on) &&
+			(!st->sensor[SENSOR_GYRO].on) &&
+			(!st->sensor[SENSOR_COMPASS].on))
+		st->gesture_only_on = true;
+	else
+		st->gesture_only_on = false;
+
+	/* update rate to user side for sensors which are affected by gesture */
+	if (st->sensor_l[SENSOR_L_GESTURE_ACCEL].on) {
+		for (i = 0; i < SENSOR_L_NUM_MAX; i++) {
+			if (st->sensor_l[i].on &&
+					st->sensor_l[SENSOR_L_GESTURE_ACCEL].base ==
+					st->sensor_l[i].base) {
+				st->sensor_l[i].rate =
+					max(st->sensor_l[i].rate,
+							st->sensor_l[SENSOR_L_GESTURE_ACCEL].rate);
+			}
+		}
+	}
+
+	/* set rate for each sensor */
+	for (i = 0; i < SENSOR_L_NUM_MAX; i++) {
+		if (st->sensor_l[i].on) {
+			st->sensor[st->sensor_l[i].base].rate =
+			    max(st->sensor[st->sensor_l[i].base].rate,
+							st->sensor_l[i].rate);
+		}
+	}
+	if (st->chip_config.eis_enable)
+		st->sensor_l[SENSOR_L_EIS_GYRO].rate = ESI_GYRO_RATE;
+	if (st->sensor_l[SENSOR_L_GESTURE_ACCEL].on) {
+		st->sensor[SENSOR_ACCEL].rate =
+			max(st->sensor[SENSOR_ACCEL].rate,
+			st->sensor_l[SENSOR_L_GESTURE_ACCEL].rate);
+	}
+	if (inv_get_apex_enabled(st)) {
+		st->sensor[SENSOR_ACCEL].rate =
+			max(st->sensor[SENSOR_ACCEL].rate,
+			inv_get_apex_odr(st));
+	}
+
+	/* set rate for corresponding wake-up and non wake-up sensors */
+	for (i = 0; i < ARRAY_SIZE(wake); i++)
+		inv_check_wake_non_wake(st, wake[i], non_wake[i]);
+
+	/* calculate decimation rate for each sensor */
+	for (i = 0; i < SENSOR_L_NUM_MAX; i++) {
+		if (st->sensor_l[i].on) {
+			if (st->sensor_l[i].rate)
+				st->sensor_l[i].div =
+				    st->sensor[st->sensor_l[i].base].rate
+							/ st->sensor_l[i].rate;
+			else
+				st->sensor_l[i].div = 0xffff;
+			pr_debug("sensor= %d, div= %d\n",
+						i, st->sensor_l[i].div);
+		}
+	}
+
+	/* set decimation rate for corresponding wake-up and non wake-up sensors */
+	for (i = 0; i < ARRAY_SIZE(wake); i++)
+		inv_check_wake_non_wake_divider(st, wake[i], non_wake[i]);
 
 	return 0;
 }
-#else
+#else /* ICM20608D/ICM20648 */
 static void inv_do_check_sensor_on(struct inv_mpu_state *st,
 				enum SENSOR_L *wake,
 				enum SENSOR_L *non_wake, int sensor_size)
@@ -929,6 +1127,49 @@ int inv_check_sensor_on(struct inv_mpu_state *st)
 #endif
 
 #ifdef CONFIG_PM_SLEEP
+static bool any_wakeup_streaming_enabled(struct inv_mpu_state *st)
+{
+	int i;
+
+	for (i = SENSOR_L_ACCEL_WAKE; i < SENSOR_L_NUM_MAX; i++) {
+		if (st->sensor_l[i].on)
+			return true;
+	}
+	return false;
+}
+
+static int set_interrupt_for_suspend(struct inv_mpu_state *st)
+{
+	if (any_wakeup_streaming_enabled(st)) {
+		/* wakeup streaming sensor is enabled */
+		/* do nothing */
+	} else if (!st->chip_config.wake_on) {
+		/* no wakeup gesture is enabled, disable all interrupts */
+		inv_stop_interrupt(st);
+	} else {
+		/* wakeup gesture is enabled, stop streaming interrupts */
+		inv_stop_stream_interrupt(st);
+	}
+
+	return 0;
+}
+
+static int restore_interrupt_for_suspend(struct inv_mpu_state *st)
+{
+	if (any_wakeup_streaming_enabled(st)) {
+		/* wakeup streaming sensor is enabled */
+		/* do nothing */
+	} else if (!st->chip_config.wake_on) {
+		/* no wakeup gesture is enabled, do the opposite of suspend */
+		inv_restore_interrupt(st);
+	} else {
+		/* reenable streaming interrupts */
+		inv_restore_stream_interrupt(st);
+	}
+
+	return 0;
+}
+
 int inv_mpu_suspend(struct iio_dev *indio_dev)
 {
 	struct inv_mpu_state *st = iio_priv(indio_dev);
@@ -938,11 +1179,11 @@ int inv_mpu_suspend(struct iio_dev *indio_dev)
 	mutex_lock(&indio_dev->mlock);
 
 	st->resume_state = false;
-	if (st->chip_config.wake_on) {
+
+	set_interrupt_for_suspend(st);
+
+	if (st->chip_config.wake_on)
 		enable_irq_wake(st->irq);
-	} else {
-		inv_stop_interrupt(st);
-	}
 
 	mutex_unlock(&indio_dev->mlock);
 
@@ -968,21 +1209,21 @@ void inv_mpu_complete(struct iio_dev *indio_dev)
 
 	mutex_lock(&indio_dev->mlock);
 
-	if (!st->chip_config.wake_on) {
-		inv_reenable_interrupt(st);
-	} else {
+	if (st->chip_config.wake_on)
 		disable_irq_wake(st->irq);
-	}
-	/*	resume state is used to synchronize read_fifo such that it won't
-		proceed unless resume is finished. */
+
+	restore_interrupt_for_suspend(st);
+
+	/* resume state is used to synchronize read_fifo such that it won't
+	 * proceed unless resume is finished.
+	 */
 	st->resume_state = true;
-	/*	resume flag is indicating that current clock reading is from resume,
-		it has up to 1 second drift and should do proper processing */
+	/* resume flag is indicating that current clock reading is from resume,
+	 * it has up to 1 second drift and should do proper processing
+	 */
 	st->ts_algo.resume_flag  = true;
 	mutex_unlock(&indio_dev->mlock);
 	wake_up_interruptible(&st->wait_queue);
-
-	return;
 }
 EXPORT_SYMBOL_GPL(inv_mpu_complete);
 #endif

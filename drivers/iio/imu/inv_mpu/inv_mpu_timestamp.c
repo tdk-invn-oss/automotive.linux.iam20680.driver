@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2018 InvenSense, Inc.
+ * Copyright (C) 2012-2019 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -31,7 +31,7 @@
 #define INV_TIME_CALIB_THRESHOLD_1 2
 
 #define MIN_DELAY (3 * NSEC_PER_MSEC)
-#define JITTER_THRESH ( 1 * NSEC_PER_MSEC)
+#define JITTER_THRESH (1 * NSEC_PER_MSEC)
 
 int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 {
@@ -146,13 +146,9 @@ int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st)
 	pr_debug("fifc=%d\n", fifo_count);
 	if (!fifo_count)
 		return 0;
-	if (st->special_mag_mode && (fifo_count == 2)) {
-		pr_debug("special trigger\n");
-		fifo_count = 1;
-	}
 
 	/* In non DMP mode, either gyro or accel duration is the duration
-           for each sample */
+		for each sample */
 	if (st->chip_config.gyro_enable)
 		dur = st->eng_info[ENGINE_GYRO].dur;
 	else
@@ -184,16 +180,30 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 	if (st->sensor[i].ts < st->sensor[i].previous_ts)
 		st->sensor[i].ts = st->sensor[i].previous_ts + st->sensor[i].dur;
 
-	//hifi sensor limits ts jitter to +/- 2%
-	expected_upper_duration = st->eng_info[st->sensor[i].engine_base].divider * 1020000;
-	expected_lower_duration = st->eng_info[st->sensor[i].engine_base].divider * 980000;
-#if defined(CONFIG_INV_MPU_IIO_ICM20602) || defined(CONFIG_INV_MPU_IIO_ICM20690) || defined(CONFIG_INV_MPU_IIO_IAM20680)
+	/* hifi sensor limits ts jitter to +/- 2% */
+#if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
+	defined(CONFIG_INV_MPU_IIO_ICM20608D)
+	/* for DMP enabled devices */
+	expected_upper_duration =
+		st->eng_info[st->sensor[i].engine_base].dur *
+		st->sensor[i].div / 1000 * 1020;
+	expected_lower_duration =
+		st->eng_info[st->sensor[i].engine_base].dur *
+		st->sensor[i].div / 1000 * 980;
+#else
+	/* for no DMP devices */
+	expected_upper_duration =
+		st->eng_info[st->sensor[i].engine_base].dur / 1000 * 1020;
+	expected_lower_duration =
+		st->eng_info[st->sensor[i].engine_base].dur / 1000 * 980;
+#endif
+
 	if (st->sensor[i].ts < st->sensor[i].previous_ts + expected_lower_duration)
 		st->sensor[i].ts = st->sensor[i].previous_ts + expected_lower_duration;
 	if (st->sensor[i].ts > st->sensor[i].previous_ts + expected_upper_duration)
 		st->sensor[i].ts = st->sensor[i].previous_ts + expected_upper_duration;
-#endif
-	if (st->sensor[i].ts > current_time )
+
+	if (st->sensor[i].ts > current_time)
 		st->sensor[i].ts = current_time;
 
 	st->sensor[i].previous_ts = st->sensor[i].ts;

@@ -212,6 +212,8 @@ static int inv_parse_secondary(struct device *dev,
 		pdata->sec_slave_id = COMPASS_ID_AK09911;
 	else if (!strcmp(name, "ak09912"))
 		pdata->sec_slave_id = COMPASS_ID_AK09912;
+	else if (!strcmp(name, "ak09915"))
+		pdata->sec_slave_id = COMPASS_ID_AK09915;
 	else if (!strcmp(name, "ak09916"))
 		pdata->sec_slave_id = COMPASS_ID_AK09916;
 	else

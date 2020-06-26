@@ -585,7 +585,7 @@ int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
 			}
 			ind += BYTES_PER_SENSOR;
 			pr_debug(
-				"%s self_test accel data - %d %+d %+d %+d",
+				"%s self_test accel data - %d %+d %+d %+d\n",
 				st->hw->name, s, vals[0], vals[1], vals[2]);
 
 			for (j = 0; j < THREE_AXIS; j++) {
@@ -593,7 +593,7 @@ int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
 					(__be16 *)(&data[ind + 2 * j]));
 				gyro_result[j] += vals[j];
 			}
-			pr_debug("%s self_test gyro data - %d %+d %+d %+d",
+			pr_debug("%s self_test gyro data - %d %+d %+d %+d\n",
 				st->hw->name, s, vals[0], vals[1], vals[2]);
 
 			s++;

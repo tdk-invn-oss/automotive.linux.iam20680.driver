@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2017-2018 InvenSense, Inc.
+* Copyright (C) 2017-2019 InvenSense, Inc.
 *
 * This software is licensed under the terms of the GNU General Public
 * License version 2, as published by the Free Software Foundation, and
@@ -264,7 +264,6 @@ static int inv_set_div(struct inv_mpu_state *st, int a_d, int g_d)
 	return result;
 }
 
-// 20680 does not support batching
 static int inv_set_batch(struct inv_mpu_state *st)
 {
 #ifdef TIMER_BASED_BATCHING
@@ -451,6 +450,48 @@ int set_inv_enable(struct iio_dev *indio_dev)
 
 	return result;
 }
+
+static int inv_save_interrupt_config(struct inv_mpu_state *st)
+{
+	int res;
+
+	res = inv_plat_read(st, REG_INT_ENABLE, 1, &st->int_en);
+
+	return res;
+}
+
+int inv_stop_interrupt(struct inv_mpu_state *st)
+{
+	int res;
+
+	res = inv_save_interrupt_config(st);
+	if (res)
+		return res;
+
+	res = inv_plat_single_write(st, REG_INT_ENABLE, 0);
+
+	return res;
+}
+
+int inv_restore_interrupt(struct inv_mpu_state *st)
+{
+	int res;
+
+	res = inv_plat_single_write(st, REG_INT_ENABLE, st->int_en);
+
+	return res;
+}
+
+int inv_stop_stream_interrupt(struct inv_mpu_state *st)
+{
+	return inv_stop_interrupt(st);
+}
+
+int inv_restore_stream_interrupt(struct inv_mpu_state *st)
+{
+	return inv_restore_interrupt(st);
+}
+
 /* dummy function for 20608D */
 int inv_enable_pedometer_interrupt(struct inv_mpu_state *st, bool en)
 {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 InvenSense, Inc.
+ * Copyright (C) 2017-2019 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -27,14 +27,12 @@
 #include <linux/spinlock.h>
 #include <linux/spi/spi.h>
 #include <linux/i2c.h>
+#include <linux/version.h>
 
 #include "../inv_mpu_iio.h"
 
 static const struct inv_hw_s hw_info[INV_NUM_PARTS] = {
-	{128, "ICM20608D"},
-	{128, "ICM20690"},
-	{128, "ICM20602"},
-	{128, "IAM20680"},
+	[IAM20680] = {128, "iam20680"},
 };
 
 #ifndef SUPPORT_ONLY_BASIC_FEATURES
@@ -736,7 +734,6 @@ static ssize_t inv_reg_dump_show(struct device *dev,
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 
 	mutex_lock(&indio_dev->mlock);
-	bytes_printed += snprintf(buf + bytes_printed, MAX_WR_SZ, "bank 0\n");
 
 	for (ii = 0; ii < 0x7F; ii++) {
 		/* don't read fifo r/w register */
@@ -744,8 +741,8 @@ static ssize_t inv_reg_dump_show(struct device *dev,
 			data = 0;
 		else
 			inv_plat_read(st, ii, 1, &data);
-		bytes_printed += snprintf(buf + bytes_printed, MAX_WR_SZ,
-				"%#2x: %#2x\n", ii, data);
+		bytes_printed += snprintf(buf + bytes_printed,
+				MAX_WR_SZ - bytes_printed, "%#2x: %#2x\n", ii, data);
 	}
 	set_inv_enable(indio_dev);
 	mutex_unlock(&indio_dev->mlock);
@@ -992,7 +989,9 @@ static const struct attribute_group inv_attribute_group = {
 };
 
 static const struct iio_info mpu_info = {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)
 	.driver_module = THIS_MODULE,
+#endif
 	.attrs = &inv_attribute_group,
 };
 
@@ -1049,6 +1048,7 @@ int inv_check_chip_type(struct iio_dev *indio_dev, const char *name)
 
 	inv_attributes[t_ind] = NULL;
 
+	indio_dev->name = st->hw->name;
 	indio_dev->channels = inv_mpu_channels;
 	indio_dev->num_channels = ARRAY_SIZE(inv_mpu_channels);
 

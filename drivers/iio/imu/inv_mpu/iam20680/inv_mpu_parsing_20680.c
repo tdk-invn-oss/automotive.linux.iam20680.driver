@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 InvenSense, Inc.
+ * Copyright (C) 2017-2019 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -28,28 +28,7 @@
 
 #include "../inv_mpu_iio.h"
 
-static char iden[] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-
-static int inv_process_gyro(struct inv_mpu_state *st, u8 *d, u64 t)
-{
-	s16 raw[3];
-	s32 calib[3];
-	int i;
-#define BIAS_UNIT 2859
-
-	for (i = 0; i < 3; i++)
-		raw[i] = be16_to_cpup((__be16 *) (d + i * 2));
-
-	for (i = 0; i < 3; i++)
-		calib[i] = (raw[i] << 15);
-
-
-	inv_push_gyro_data(st, raw, calib, t);
-
-	return 0;
-}
-
-static int inv_check_fsync(struct inv_mpu_state *st, u8 fsync_status)
+static int inv_check_fsync(struct inv_mpu_state *st)
 {
 	u8 data[1];
 
@@ -71,27 +50,23 @@ static int inv_check_fsync(struct inv_mpu_state *st, u8 fsync_status)
 
 static int inv_push_sensor(struct inv_mpu_state *st, int ind, u64 t, u8 *d)
 {
-#ifdef ACCEL_BIAS_TEST
-	s16 acc[3], avg[3];
-#endif
+	int i;
+	s32 raw[3];
+	s32 calib[3] = { 0, 0, 0 };
 
 	switch (ind) {
 	case SENSOR_ACCEL:
-		inv_convert_and_push_8bytes(st, ind, d, t, iden);
-#ifdef ACCEL_BIAS_TEST
-		acc[0] = be16_to_cpup((__be16 *) (d));
-		acc[1] = be16_to_cpup((__be16 *) (d + 2));
-		acc[2] = be16_to_cpup((__be16 *) (d + 4));
-		if(inv_get_3axis_average(acc, avg, 0)){
-			pr_debug("accel 200 samples average = %5d, %5d, %5d\n", avg[0], avg[1], avg[2]);
-		}
-#endif
+		for (i = 0; i < 3; i++)
+			raw[i] = (s16)be16_to_cpup((__be16 *) (d + i * 2));
+		inv_push_16bytes_buffer(st, ind, t, raw, 0);
 		break;
 	case SENSOR_TEMP:
-		inv_check_fsync(st, d[1]);
+		inv_check_fsync(st);
 		break;
 	case SENSOR_GYRO:
-		inv_process_gyro(st, d, t);
+		for (i = 0; i < 3; i++)
+			raw[i] = (s16)be16_to_cpup((__be16 *) (d + i * 2));
+		inv_push_gyro_data(st, raw, calib, t);
 		break;
 	default:
 		break;
@@ -136,7 +111,7 @@ static int inv_process_20680_data(struct inv_mpu_state *st)
 	int len;
 #endif
 
-	if(st->gesture_only_on && (!st->batch.timeout)) {
+	if (st->gesture_only_on && (!st->batch.timeout)) {
 		res = inv_plat_read(st, REG_INT_STATUS, 1, data);
 		if (res)
 			return res;
@@ -345,7 +320,7 @@ static void _inv_read_fifo(struct inv_mpu_state *st)
 #ifdef CONFIG_HAS_WAKELOCK
 		wake_lock_timeout(&st->wake_lock, msecs_to_jiffies(200));
 #else
-		__pm_wakeup_event(&st->wake_lock, 200); /* 200 msecs */
+		__pm_wakeup_event(st->wake_lock, 200); /* 200 msecs */
 #endif
 	return;
 
@@ -369,11 +344,14 @@ err_reset_fifo:
 	return;
 }
 
-irqreturn_t inv_read_fifo(int irq, void *dev_id)
+irqreturn_t inv_read_fifo(int irq, void *p)
 {
-	struct inv_mpu_state *st = (struct inv_mpu_state *)dev_id;
+	struct iio_poll_func *pf = p;
+	struct iio_dev *indio_dev = pf->indio_dev;
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 
 	_inv_read_fifo(st);
+	iio_trigger_notify_done(indio_dev->trig);
 
 	return IRQ_HANDLED;
 }
@@ -403,13 +381,13 @@ int inv_flush_batch_data(struct iio_dev *indio_dev, int data)
 		st->chip_config.accel_enable ||
 		st->chip_config.slave_enable ||
 		st->chip_config.pressure_enable) {
-		st->wake_sensor_received = 0;
+		st->wake_sensor_received = false;
 		inv_process_20680_data(st);
 		if (st->wake_sensor_received)
 #ifdef CONFIG_HAS_WAKELOCK
 			wake_lock_timeout(&st->wake_lock, msecs_to_jiffies(200));
 #else
-			__pm_wakeup_event(&st->wake_lock, 200); /* 200 msecs */
+			__pm_wakeup_event(st->wake_lock, 200); /* 200 msecs */
 #endif
 		inv_switch_power_in_lp(st, false);
 	}

@@ -50,6 +50,13 @@ inv-mpu-iio-objs += iam20680/inv_mpu_core_20680.o
 inv-mpu-iio-objs += iam20680/inv_mpu_parsing_20680.o
 inv-mpu-iio-objs += iam20680/inv_mpu_setup_20680.o
 inv-mpu-iio-objs += iam20680/inv_mpu_selftest_20680.o
+else ifeq ($(CONFIG_INV_MPU_IIO_ICM42600), y)
+inv-mpu-iio-objs += icm42600/inv_mpu_init_42600.o
+inv-mpu-iio-objs += icm42600/inv_mpu_core_42600.o
+inv-mpu-iio-objs += icm42600/inv_mpu_parsing_42600.o
+inv-mpu-iio-objs += icm42600/inv_mpu_setup_42600.o
+inv-mpu-iio-objs += icm42600/inv_mpu_misc_42600.o
+inv-mpu-iio-objs += icm42600/inv_mpu_selftest_42600.o
 endif
 
 # Bus support
@@ -58,4 +65,3 @@ inv-mpu-iio-i2c-objs := inv_mpu_i2c.o
 obj-$(CONFIG_INV_MPU_IIO_SPI) += inv-mpu-iio-spi.o
 inv-mpu-iio-spi-objs := inv_mpu_spi.o
 
-obj-y += inv_test/
