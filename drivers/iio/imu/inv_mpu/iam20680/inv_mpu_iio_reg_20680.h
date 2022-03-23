@@ -122,7 +122,7 @@
 #define REG_FIFO_R_W            0x74
 #define REG_WHO_AM_I              0x75
 
-#define REG_6500_XG_ST_DATA     0x50
+#define REG_6500_XG_ST_DATA     0x00
 #define REG_6500_XA_ST_DATA     0xD
 #define REG_6500_XA_OFFS_H      0x77
 #define REG_6500_YA_OFFS_H      0x7A
