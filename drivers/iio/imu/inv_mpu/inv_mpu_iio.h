@@ -56,7 +56,7 @@
 #include "icm42600/inv_mpu_iio_reg_42600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"9.1.6"
+#define INVENSENSE_DRIVER_VERSION		"9.1.7"
 
 /* #define DEBUG */
 

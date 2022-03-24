@@ -704,18 +704,17 @@ static ssize_t inv_temperature_show(struct device *dev,
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct inv_mpu_state *st = iio_priv(indio_dev);
-
 	u8 data[2];
 	s32 temp;
 	int res;
 
 	mutex_lock(&indio_dev->mlock);
 	res = inv_plat_read(st, REG_RAW_TEMP, 2, data);
+	mutex_unlock(&indio_dev->mlock);
 	if (res)
 		return res;
-	mutex_unlock(&indio_dev->mlock);
 
-	temp = (s32)be16_to_cpup((__be16 *)(data)) * 10000;
+	temp = (s16)be16_to_cpup((__be16 *)(data)) * 10000;
 	temp = temp / TEMP_SENSITIVITY + TEMP_OFFSET;
 
 	return snprintf(buf, MAX_WR_SZ, "%d %lld\n", temp, get_time_ns());
