@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2019 InvenSense, Inc.
+ * Copyright (C) 2017-2020 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -71,7 +71,6 @@ int inv_set_accel_sf(struct inv_mpu_state *st)
 	return result;
 }
 
-// dummy for 20602
 int inv_set_accel_intel(struct inv_mpu_state *st)
 {
 	return 0;
@@ -227,7 +226,7 @@ int inv_mpu_initialize(struct inv_mpu_state *st)
 	result = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_H_RESET);
 	if (result)
 		return result;
-	usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC);
+	usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
 	msleep(100);
 	/* toggle power state */
 	result = inv_set_power(st, false);

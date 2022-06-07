@@ -57,6 +57,13 @@ inv-mpu-iio-objs += icm42600/inv_mpu_parsing_42600.o
 inv-mpu-iio-objs += icm42600/inv_mpu_setup_42600.o
 inv-mpu-iio-objs += icm42600/inv_mpu_misc_42600.o
 inv-mpu-iio-objs += icm42600/inv_mpu_selftest_42600.o
+else ifeq ($(CONFIG_INV_MPU_IIO_ICM43600), y)
+inv-mpu-iio-objs += icm43600/inv_mpu_init_43600.o
+inv-mpu-iio-objs += icm43600/inv_mpu_core_43600.o
+inv-mpu-iio-objs += icm43600/inv_mpu_parsing_43600.o
+inv-mpu-iio-objs += icm43600/inv_mpu_setup_43600.o
+inv-mpu-iio-objs += icm43600/inv_mpu_misc_43600.o
+inv-mpu-iio-objs += icm43600/inv_mpu_selftest_43600.o
 endif
 
 # Bus support

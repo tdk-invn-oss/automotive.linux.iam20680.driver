@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2019 InvenSense, Inc.
+ * Copyright (C) 2012-2021 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -95,6 +95,10 @@ int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 		}
 
 		st->eng_info[en_ind].last_update_time = ts_algo->last_run_time;
+#if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
+		defined(CONFIG_INV_MPU_IIO_ICM20608D) || \
+		defined(CONFIG_INV_MPU_IIO_ICM42600) || \
+		defined(CONFIG_INV_MPU_IIO_ICM43600)
 		/* update all the sensors duration based on the same engine */
 		for (i = 0; i < SENSOR_NUM_MAX; i++) {
 			if (st->sensor[i].on &&
@@ -102,6 +106,14 @@ int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 				st->sensor[i].dur = st->sensor[i].div *
 				    st->eng_info[en_ind].dur;
 		}
+#else
+		/* update all the sensors duration. There is a single engine */
+		for (i = 0; i < SENSOR_NUM_MAX; i++) {
+			if (st->sensor[i].on)
+				st->sensor[i].dur = st->sensor[i].div *
+					st->eng_info[en_ind].dur;
+		}
+#endif
 
 	}
 	st->sensor[ind].sample_calib = 0;
@@ -192,10 +204,18 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 		st->sensor[i].div / 1000 * 980;
 #else
 	/* for no DMP devices */
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM43600)
 	expected_upper_duration =
 		st->eng_info[st->sensor[i].engine_base].dur / 1000 * 1020;
 	expected_lower_duration =
 		st->eng_info[st->sensor[i].engine_base].dur / 1000 * 980;
+#else
+	expected_upper_duration =
+		st->eng_info[st->ts_algo.clock_base].dur / 1000 * 1020;
+	expected_lower_duration =
+		st->eng_info[st->ts_algo.clock_base].dur / 1000 * 980;
+#endif
 #endif
 
 	if (st->sensor[i].ts < st->sensor[i].previous_ts + expected_lower_duration)

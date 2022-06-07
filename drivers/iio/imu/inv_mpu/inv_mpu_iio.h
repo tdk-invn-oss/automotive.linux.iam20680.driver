@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2019 InvenSense, Inc.
+ * Copyright (C) 2012-2020 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -17,7 +17,7 @@
 #include <linux/i2c.h>
 #include <linux/kfifo.h>
 #include <linux/miscdevice.h>
-#include <linux/spinlock.h>
+#include <linux/mutex.h>
 #include <linux/delay.h>
 #include <linux/iio/imu/mpu.h>
 #include <linux/interrupt.h>
@@ -54,9 +54,11 @@
 #include "iam20680/inv_mpu_iio_reg_20680.h"
 #elif defined(CONFIG_INV_MPU_IIO_ICM42600)
 #include "icm42600/inv_mpu_iio_reg_42600.h"
+#elif defined(CONFIG_INV_MPU_IIO_ICM43600)
+#include "icm43600/inv_mpu_iio_reg_43600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"9.1.7"
+#define INVENSENSE_DRIVER_VERSION		"9.6.0"
 
 /* #define DEBUG */
 
@@ -597,7 +599,7 @@ struct inv_timestamp_algo {
 	u32 first_drop_samples[SENSOR_NUM_MAX];
 };
 
-#ifdef CONFIG_INV_MPU_IIO_ICM42600
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600)
 /**
  *	struct inv_apex_data - apex gesture algo data .
  *	@step_cnt_total: step count total.
@@ -628,6 +630,9 @@ struct inv_mpu_slave;
  *  @slave_als:         slave als.
  *  @slv_reg: slave register data structure.
  *  @ts_algo: timestamp algorithm data structure.
+ *  @apex_supported flag if apex feature is supported.
+ *  @smd_supported flag if smd is supported by hardware.
+ *  @apex_data data of apex data.
  *  @sec_set: slave register odr config.
  *  @eng_info: information for each engine.
  *  @hw:		Other hardware-specific information.
@@ -735,6 +740,7 @@ struct inv_mpu_slave;
  *  @smplrt_div: SMPLRT_DIV register value.
  */
 struct inv_mpu_state {
+	struct mutex lock;
 	struct device *dev;
 	struct i2c_client *aux_dev;
 	struct iio_trigger *trig;
@@ -756,7 +762,9 @@ struct inv_mpu_state {
 	struct inv_mpu_slave *slave_als;
 	struct inv_secondary_reg slv_reg[4];
 	struct inv_timestamp_algo ts_algo;
-#ifdef CONFIG_INV_MPU_IIO_ICM42600
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600)
+	bool apex_supported;
+	bool smd_supported;
 	struct inv_apex_data apex_data;
 #endif
 	struct inv_secondary_set sec_set;
@@ -1120,32 +1128,32 @@ int inv_execute_write_secondary(struct inv_mpu_state *st, int ind, int addr,
 int inv_execute_read_secondary(struct inv_mpu_state *st, int ind, int addr,
 			       int reg, int len, u8 *d);
 
-int inv_push_16bytes_buffer(struct inv_mpu_state *st, u16 hdr,
+int inv_push_16bytes_buffer(struct iio_dev *indio_dev, u16 hdr,
 						u64 t, int *q, s16 accur);
-int inv_push_gyro_data(struct inv_mpu_state *st, s32 *raw, s32 *calib, u64 t);
-int inv_push_8bytes_buffer(struct inv_mpu_state *st, u16 hdr, u64 t, s16 *d);
-int inv_push_8bytes_kf(struct inv_mpu_state *st, u16 hdr, u64 t, s16 *d);
+int inv_push_gyro_data(struct iio_dev *indio_dev, s32 *raw, s32 *calib, u64 t);
+int inv_push_8bytes_buffer(struct iio_dev *indio_dev, u16 hdr, u64 t, s16 *d);
+int inv_push_8bytes_kf(struct iio_dev *indio_dev, u16 hdr, u64 t, s16 *d);
 
-void inv_push_step_indicator(struct inv_mpu_state *st, u64 t);
-int inv_send_steps(struct inv_mpu_state *st, int step, u64 t);
-int inv_push_marker_to_buffer(struct inv_mpu_state *st, u16 hdr, int data);
+void inv_push_step_indicator(struct iio_dev *indio_dev, u64 t);
+int inv_send_steps(struct iio_dev *indio_dev, int step, u64 t);
+int inv_push_marker_to_buffer(struct iio_dev *indio_dev, u16 hdr, int data);
 
 int inv_check_sensor_on(struct inv_mpu_state *st);
 int inv_write_cntl(struct inv_mpu_state *st, u16 wd, bool en, int cntl);
 
 int inv_get_packet_size(struct inv_mpu_state *st, u16 hdr,
 						u32 *pk_size, u8 *dptr);
-int inv_parse_packet(struct inv_mpu_state *st, u16 hdr, u8 *dptr);
+int inv_parse_packet(struct iio_dev *indio_dev, u16 hdr, u8 *dptr);
 int inv_pre_parse_packet(struct inv_mpu_state *st, u16 hdr, u8 *dptr);
-int inv_process_dmp_data(struct inv_mpu_state *st);
+int inv_process_dmp_data(struct iio_dev *indio_dev);
 
 int be32_to_int(u8 *d);
-void inv_convert_and_push_16bytes(struct inv_mpu_state *st, u16 hdr,
-							u8 *d, u64 t, s8 *m);
-void inv_convert_and_push_8bytes(struct inv_mpu_state *st, u16 hdr,
-						u8 *d, u64 t, s8 *m);
+void inv_convert_and_push_16bytes(struct iio_dev *indio_dev, u16 hdr,
+				  u8 *d, u64 t, s8 *m);
+void inv_convert_and_push_8bytes(struct iio_dev *indio_dev, u16 hdr,
+				 u8 *d, u64 t, s8 *m);
 int inv_get_dmp_ts(struct inv_mpu_state *st, int i);
-int inv_process_step_det(struct inv_mpu_state *st, u8 *dptr);
+int inv_process_step_det(struct iio_dev *indio_dev, u8 *dptr);
 int inv_process_eis(struct inv_mpu_state *st, u16 delay);
 int inv_rate_convert(struct inv_mpu_state *st, int ind, int data);
 

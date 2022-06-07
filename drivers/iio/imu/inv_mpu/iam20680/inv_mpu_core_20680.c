@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2019 InvenSense, Inc.
+ * Copyright (C) 2017-2020 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -99,7 +99,8 @@ static int inv_set_accel_bias_reg(struct inv_mpu_state *st,
 	accel_reg_bias = ((int)d[0] << 8) | d[1];
 
 	/* accel_bias is 2g scaled by 1<<16.
-	 * Convert to 16g, and mask bit0 */
+	 * Convert to 16g, and mask bit0
+	 */
 	accel_reg_bias -= ((accel_bias / 8 / 65536) & ~1);
 
 	d[0] = (accel_reg_bias >> 8) & 0xff;
@@ -142,7 +143,8 @@ static int inv_set_gyro_bias_reg(struct inv_mpu_state *st,
 	}
 
 	/* gyro_bias is 2000dps scaled by 1<<16.
-	 * Convert to 1000dps */
+	 * Convert to 1000dps
+	 */
 	gyro_reg_bias = (-gyro_bias * 2 / 65536);
 
 	d[0] = (gyro_reg_bias >> 8) & 0xff;
@@ -230,11 +232,12 @@ static ssize_t inv_bias_store(struct device *dev,
 			size_t count)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int result;
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	result = _bias_store(dev, attr, buf, count);
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 
 	return result;
 }
@@ -317,11 +320,12 @@ static ssize_t inv_misc_attr_store(struct device *dev,
 			size_t count)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int result;
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	result = _misc_attr_store(dev, attr, buf, count);
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 	if (result)
 		return result;
 
@@ -364,14 +368,14 @@ static ssize_t inv_sensor_rate_store(struct device *dev,
 
 	if (rate == st->sensor_l[ind].rate)
 		return count;
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	st->sensor_l[ind].rate = rate;
 	st->trigger_state = DATA_TRIGGER;
 	inv_check_sensor_on(st);
 	result = set_inv_enable(indio_dev);
 	pr_debug("%s rate %d div %d\n", sensor_l_info[ind],
 				st->sensor_l[ind].rate, st->sensor_l[ind].div);
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 
 	return count;
 }
@@ -383,7 +387,8 @@ static ssize_t inv_sensor_on_show(struct device *dev,
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
 
-	return snprintf(buf, MAX_WR_SZ, "%d\n", st->sensor_l[this_attr->address].on);
+	return snprintf(buf, MAX_WR_SZ, "%d\n",
+			st->sensor_l[this_attr->address].on);
 }
 
 static ssize_t inv_sensor_on_store(struct device *dev,
@@ -415,12 +420,12 @@ static ssize_t inv_sensor_on_store(struct device *dev,
 		return count;
 	}
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	st->sensor_l[ind].on = on;
 	st->trigger_state = RATE_TRIGGER;
 	inv_check_sensor_on(st);
 	result = set_inv_enable(indio_dev);
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 	if (result)
 		return result;
 
@@ -575,12 +580,12 @@ static ssize_t inv_basic_attr_store(struct device *dev,
 			size_t count)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int result;
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	result = _basic_attr_store(dev, attr, buf, count);
-
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 
 	return result;
 }
@@ -607,6 +612,7 @@ static ssize_t inv_attr_show(struct device *dev,
 	case ATTR_ACCEL_SCALE:
 		{
 			const s16 accel_scale[] = { 2, 4, 8, 16 };
+
 			return snprintf(buf, MAX_WR_SZ, "%d\n",
 				accel_scale[st->chip_config.accel_fs]);
 		}
@@ -657,6 +663,10 @@ static ssize_t inv_attr_show(struct device *dev,
 		return snprintf(buf, MAX_WR_SZ, "%d\n", st->gyro_st_bias[1]);
 	case ATTR_ANGLVEL_Z_ST_CALIBBIAS:
 		return snprintf(buf, MAX_WR_SZ, "%d\n", st->gyro_st_bias[2]);
+	case ATTR_GYRO_LP_MODE:
+		return snprintf(buf, MAX_WR_SZ, "%d\n", st->gyro_lp_mode);
+	case ATTR_ACCEL_LP_MODE:
+		return snprintf(buf, MAX_WR_SZ, "%d\n", st->accel_lp_mode);
 	case ATTR_ACCEL_X_ST_CALIBBIAS:
 		return snprintf(buf, MAX_WR_SZ, "%d\n", st->accel_st_bias[0]);
 	case ATTR_ACCEL_Y_ST_CALIBBIAS:
@@ -687,10 +697,10 @@ static ssize_t inv_self_test(struct device *dev,
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int res;
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	res = inv_hw_self_test(st);
 	set_inv_enable(indio_dev);
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 
 	return snprintf(buf, MAX_WR_SZ, "%d\n", res);
 }
@@ -708,11 +718,11 @@ static ssize_t inv_temperature_show(struct device *dev,
 	s32 temp;
 	int res;
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	res = inv_plat_read(st, REG_RAW_TEMP, 2, data);
-	mutex_unlock(&indio_dev->mlock);
 	if (res)
 		return res;
+	mutex_unlock(&st->lock);
 
 	temp = (s16)be16_to_cpup((__be16 *)(data)) * 10000;
 	temp = temp / TEMP_SENSITIVITY + TEMP_OFFSET;
@@ -732,7 +742,7 @@ static ssize_t inv_reg_dump_show(struct device *dev,
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 
 	for (ii = 0; ii < 0x7F; ii++) {
 		/* don't read fifo r/w register */
@@ -744,7 +754,7 @@ static ssize_t inv_reg_dump_show(struct device *dev,
 				MAX_WR_SZ - bytes_printed, "%#2x: %#2x\n", ii, data);
 	}
 	set_inv_enable(indio_dev);
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 
 	return bytes_printed;
 }
@@ -754,21 +764,30 @@ static ssize_t inv_flush_batch_store(struct device *dev,
 			size_t count)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int result, data;
 
 	result = kstrtoint(buf, 10, &data);
 	if (result)
 		return result;
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	result = inv_flush_batch_data(indio_dev, data);
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 
 	return count;
 }
 
 static const struct iio_chan_spec inv_mpu_channels[] = {
-	IIO_CHAN_SOFT_TIMESTAMP(INV_MPU_SCAN_TIMESTAMP),
+	{
+		.type = IIO_ACCEL,
+		.scan_index = 0,
+		.scan_type = {
+			.sign = 's',
+			.realbits = 64,
+			.storagebits = 64,
+		},
+	},
 };
 
 /* special run time sysfs entry, read only */
@@ -872,6 +891,11 @@ static IIO_DEVICE_ATTR(in_anglvel_y_offset, S_IRUGO | S_IWUSR,
 static IIO_DEVICE_ATTR(in_anglvel_z_offset, S_IRUGO | S_IWUSR,
 			inv_attr_show, inv_bias_store, ATTR_GYRO_Z_OFFSET);
 
+static IIO_DEVICE_ATTR(info_gyro_lp_mode, S_IRUGO | S_IWUSR,
+			inv_attr_show, NULL, ATTR_GYRO_LP_MODE);
+static IIO_DEVICE_ATTR(info_accel_lp_mode, S_IRUGO | S_IWUSR,
+			inv_attr_show, NULL, ATTR_ACCEL_LP_MODE);
+
 #ifndef SUPPORT_ONLY_BASIC_FEATURES
 static IIO_DEVICE_ATTR(in_step_detector_enable, S_IRUGO | S_IWUSR,
 			inv_attr_show, inv_basic_attr_store,
@@ -917,6 +941,7 @@ static const struct attribute *inv_raw_attributes[] = {
 	&iio_dev_attr_misc_batchmode_timeout.dev_attr.attr,
 	&iio_dev_attr_in_accel_rate.dev_attr.attr,
 	&iio_dev_attr_in_accel_wake_rate.dev_attr.attr,
+	&iio_dev_attr_info_accel_lp_mode.dev_attr.attr,
 };
 
 #ifndef SUPPORT_ONLY_BASIC_FEATURES
@@ -942,6 +967,7 @@ static const struct attribute *inv_gyro_attributes[] = {
 #endif
 	&iio_dev_attr_in_anglvel_wake_rate.dev_attr.attr,
 	&iio_dev_attr_info_gyro_sf.dev_attr.attr,
+	&iio_dev_attr_info_gyro_lp_mode.dev_attr.attr,
 };
 
 static const struct attribute *inv_bias_attributes[] = {

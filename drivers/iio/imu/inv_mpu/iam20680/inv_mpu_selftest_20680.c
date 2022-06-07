@@ -1,80 +1,80 @@
 /*
-* Copyright (C) 2017-2018 InvenSense, Inc.
-*
-* This software is licensed under the terms of the GNU General Public
-* License version 2, as published by the Free Software Foundation, and
-* may be copied, distributed, and modified under those terms.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*/
+ * Copyright (C) 2017-2020 InvenSense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 #define pr_fmt(fmt) "inv_mpu: " fmt
 
 #include "../inv_mpu_iio.h"
 
 /* register settings */
-#define DEF_SELFTEST_GYRO_SENS          (32768 / 250)
+#define DEF_SELFTEST_GYRO_SENS		(32768 / 250)
 /* wait time before collecting data */
-#define MAX_PACKETS                     20
-#define SELFTEST_WAIT_TIME              (MAX_PACKETS * 10)
-#define DEF_ST_STABLE_TIME              20
-#define DEF_GYRO_SCALE                  131
-#define DEF_ST_PRECISION                1000
-#define DEF_ST_ACCEL_FS_MG              2000UL
-#define DEF_ST_SCALE                    32768
-#define DEF_ST_TRY_TIMES                2
-#define DEF_ST_ACCEL_RESULT_SHIFT       1
-#define DEF_ST_SAMPLES                  200
+#define MAX_PACKETS			20
+#define SELFTEST_WAIT_TIME		(MAX_PACKETS * 10)
+#define DEF_ST_STABLE_TIME		20
+#define DEF_GYRO_SCALE			131
+#define DEF_ST_PRECISION		1000
+#define DEF_ST_ACCEL_FS_MG		2000UL
+#define DEF_ST_SCALE			32768
+#define DEF_ST_TRY_TIMES		2
+#define DEF_ST_ACCEL_RESULT_SHIFT	1
+#define DEF_ST_SAMPLES			200
 
-#define DEF_ACCEL_ST_SHIFT_DELTA_MIN    500
-#define DEF_ACCEL_ST_SHIFT_DELTA_MAX    1500
-#define DEF_GYRO_CT_SHIFT_DELTA         500
+#define DEF_ACCEL_ST_SHIFT_DELTA_MIN	500
+#define DEF_ACCEL_ST_SHIFT_DELTA_MAX	1500
+#define DEF_GYRO_CT_SHIFT_DELTA		500
 
-#define SENSOR_UP_TIME	30
-#define REG_UP_TIME		2
+#define SENSOR_UP_TIME			30
+#define REG_UP_TIME			2
 
-#define DEF_ST_ACCEL_FS_MG         2000UL
-#define DEF_ACCEL_ST_SHIFT_DELTA   500
+#define DEF_ST_ACCEL_FS_MG		2000UL
+#define DEF_ACCEL_ST_SHIFT_DELTA	500
 #define ACCEL_ST_AL_MIN ((DEF_ACCEL_ST_AL_MIN * DEF_ST_SCALE \
 				 / DEF_ST_ACCEL_FS_MG) * DEF_ST_PRECISION)
 #define ACCEL_ST_AL_MAX ((DEF_ACCEL_ST_AL_MAX * DEF_ST_SCALE \
 				 / DEF_ST_ACCEL_FS_MG) * DEF_ST_PRECISION)
 
-#define THREE_AXIS               3
-#define DEF_ST_MPU6500_ACCEL_LPF        2
-#define DEF_SELFTEST_SAMPLE_RATE        0  /* 1000Hz */
-#define DEF_SELFTEST_SAMPLE_RATE_LP     3  /*  250Hz */
-#define DEF_SELFTEST_SAMPLE_RATE_ACC_LP 10 /*  250Hz LPOSC_CLKSEL */
-#define INV_MPU_SAMPLE_RATE_CHANGE_STABLE 50
-#define DEF_SELFTEST_6500_ACCEL_FS      (0 << 3)
-#define DEF_SELFTEST_GYRO_FS            (0 << 3)
-#define DEF_ST_6500_STABLE_TIME         20
-#define BIT_ACCEL_OUT           0x08
-#define BITS_GYRO_OUT           0x70
-#define THREE_AXIS               3
-#define DEF_GYRO_WAIT_TIME              10
-#define DEF_GYRO_WAIT_TIME_LP           50
+#define THREE_AXIS			3
+#define DEF_ST_IAM20680_ACCEL_LPF	2
+#define DEF_SELFTEST_SAMPLE_RATE	0  /* 1000Hz */
+#define DEF_SELFTEST_SAMPLE_RATE_LP	3  /*  250Hz */
+#define DEF_SELFTEST_SAMPLE_RATE_ACC_LP	10 /*  250Hz LPOSC_CLKSEL */
+#define SAMPLE_RATE_CHANGE_STABLE	50
+#define DEF_SELFTEST_20680_ACCEL_FS	(0 << 3)
+#define DEF_SELFTEST_GYRO_FS		(0 << 3)
+#define DEF_ST_20680_STABLE_TIME	20
+#define BIT_ACCEL_OUT			0x08
+#define BITS_GYRO_OUT			0x70
+#define THREE_AXIS			3
+#define DEF_GYRO_WAIT_TIME		10
+#define DEF_GYRO_WAIT_TIME_LP		50
 
 /* Gyro Offset Max Value (dps) */
-#define DEF_GYRO_OFFSET_MAX             20
+#define DEF_GYRO_OFFSET_MAX		20
 /* Gyro Self Test Absolute Limits ST_AL (dps) */
-#define DEF_GYRO_ST_AL                  60
+#define DEF_GYRO_ST_AL			60
 /* Accel Self Test Absolute Limits ST_AL (mg) */
-#define DEF_ACCEL_ST_AL_MIN             225
-#define DEF_ACCEL_ST_AL_MAX             675
+#define DEF_ACCEL_ST_AL_MIN		225
+#define DEF_ACCEL_ST_AL_MAX		675
 
 struct recover_regs {
 	u8 int_enable;		/* REG_INT_ENABLE */
-	u8 fifo_en;			/* REG_FIFO_EN */
+	u8 fifo_en;		/* REG_FIFO_EN */
 	u8 user_ctrl;		/* REG_USER_CTRL */
-	u8 config;			/* REG_CONFIG */
+	u8 config;		/* REG_CONFIG */
 	u8 gyro_config;		/* REG_GYRO_CONFIG */
 	u8 accel_config;	/* REG_ACCEL_CONFIG */
 	u8 accel_config_2;	/* REG_ACCEL_CONFIG_2 */
 	u8 smplrt_div;		/* REG_SAMPLE_RATE_DIV */
-	u8 lp_mode;			/* REG_LP_MODE_CTRL */
+	u8 lp_mode;		/* REG_LP_MODE_CTRL */
 	u8 pwr_mgmt_1;		/* REG_PWR_MGMT_1 */
 	u8 pwr_mgmt_2;		/* REG_PWR_MGMT_2 */
 };
@@ -256,14 +256,14 @@ int inv_switch_engine(struct inv_mpu_state *st, bool en, u32 mask)
 	u8 data, mgmt_1;
 	int result;
 
-	if (BIT_PWR_GYRO_STBY == mask) {
+	if (mask == BIT_PWR_GYRO_STBY) {
 		result = inv_plat_read(st, REG_PWR_MGMT_1, 1, &mgmt_1);
 		if (result)
 			return result;
 		mgmt_1 &= ~BIT_CLK_MASK;
 	}
 
-	if ((BIT_PWR_GYRO_STBY == mask) && (!en)) {
+	if ((mask == BIT_PWR_GYRO_STBY) && (!en)) {
 		result = inv_plat_single_write(st, REG_PWR_MGMT_1, mgmt_1);
 		if (result)
 			return result;
@@ -281,7 +281,7 @@ int inv_switch_engine(struct inv_mpu_state *st, bool en, u32 mask)
 	if (result)
 		return result;
 
-	if ((BIT_PWR_GYRO_STBY == mask) && en) {
+	if ((mask == BIT_PWR_GYRO_STBY) && en) {
 		/* only gyro on needs sensor up time */
 		msleep(SENSOR_UP_TIME);
 		/* after gyro is on & stable, switch internal clock to PLL */
@@ -290,7 +290,7 @@ int inv_switch_engine(struct inv_mpu_state *st, bool en, u32 mask)
 		if (result)
 			return result;
 	}
-	if ((BIT_PWR_ACCEL_STBY == mask) && en)
+	if ((mask == BIT_PWR_ACCEL_STBY) && en)
 		msleep(REG_UP_TIME);
 
 	return 0;
@@ -313,22 +313,23 @@ int inv_set_offset_reg(struct inv_mpu_state *st, int reg, int val)
 }
 
 /**
-* inv_check_gyro_self_test() - check gyro self test. this function
-*                                   returns zero as success. A non-zero return
-*                                   value indicates failure in self test.
-*  @*st: main data structure.
-*  @*reg_avg: average value of normal test.
-*  @*st_avg:  average value of self test
-*/
+ * inv_check_gyro_self_test() - check gyro self test. this function
+ *                                   returns zero as success. A non-zero return
+ *                                   value indicates failure in self test.
+ *  @*st: main data structure.
+ *  @*reg_avg: average value of normal test.
+ *  @*st_avg:  average value of self test
+ */
 int inv_check_gyro_self_test(struct inv_mpu_state *st,
-						int *reg_avg, int *st_avg) {
+						int *reg_avg, int *st_avg)
+{
 	u8 regs[3];
 	int ret_val, result;
 	int otp_value_zero = 0;
 	int st_shift_prod[3], st_shift_cust[3], i;
 
 	ret_val = 0;
-	result = inv_plat_read(st, REG_6500_XG_ST_DATA, 3, regs);
+	result = inv_plat_read(st, REG_20680_XG_ST_DATA, 3, regs);
 	if (result)
 		return result;
 	pr_debug("%s self_test gyro shift_code - %02x %02x %02x\n",
@@ -350,9 +351,9 @@ int inv_check_gyro_self_test(struct inv_mpu_state *st,
 		st_shift_cust[i] = st_avg[i] - reg_avg[i];
 		if (!otp_value_zero) {
 			/* Self Test Pass/Fail Criteria A */
-			if (st_shift_cust[i] < DEF_GYRO_CT_SHIFT_DELTA
-						* st_shift_prod[i])
-					ret_val = 1;
+			if (st_shift_cust[i] < DEF_GYRO_CT_SHIFT_DELTA *
+					st_shift_prod[i])
+				ret_val = 1;
 		} else {
 			/* Self Test Pass/Fail Criteria B */
 			if (st_shift_cust[i] < DEF_GYRO_ST_AL *
@@ -378,22 +379,23 @@ int inv_check_gyro_self_test(struct inv_mpu_state *st,
 }
 
 /**
-* inv_check_accel_self_test() - check 6500 accel self test. this function
-*                                   returns zero as success. A non-zero return
-*                                   value indicates failure in self test.
-*  @*st: main data structure.
-*  @*reg_avg: average value of normal test.
-*  @*st_avg:  average value of self test
-*/
+ * inv_check_accel_self_test() - check 20680 accel self test. this function
+ *                                   returns zero as success. A non-zero return
+ *                                   value indicates failure in self test.
+ *  @*st: main data structure.
+ *  @*reg_avg: average value of normal test.
+ *  @*st_avg:  average value of self test
+ */
 int inv_check_accel_self_test(struct inv_mpu_state *st,
-						int *reg_avg, int *st_avg) {
+						int *reg_avg, int *st_avg)
+{
 	int ret_val, result;
 	int st_shift_prod[3], st_shift_cust[3], st_shift_ratio[3], i;
 	u8 regs[3];
 	int otp_value_zero = 0;
 
 	ret_val = 0;
-	result = inv_plat_read(st, REG_6500_XA_ST_DATA, 3, regs);
+	result = inv_plat_read(st, REG_20680_XA_ST_DATA, 3, regs);
 	if (result)
 		return result;
 	pr_debug("%s self_test accel shift_code - %02x %02x %02x\n",
@@ -484,8 +486,8 @@ int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
 	if (lp_mode == 2)
 		d = BIT_ACCEL_FCHOCIE_B;
 	else
-		d = DEF_ST_MPU6500_ACCEL_LPF;
-	result = inv_plat_single_write(st, REG_6500_ACCEL_CONFIG2, d);
+		d = DEF_ST_IAM20680_ACCEL_LPF;
+	result = inv_plat_single_write(st, REG_20680_ACCEL_CONFIG2, d);
 	if (result)
 		return result;
 
@@ -499,20 +501,20 @@ int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
 	if (result)
 		return result;
 	/* wait for the sampling rate change to stabilize */
-	mdelay(INV_MPU_SAMPLE_RATE_CHANGE_STABLE);
+	mdelay(SAMPLE_RATE_CHANGE_STABLE);
 	result = inv_plat_single_write(st, REG_GYRO_CONFIG,
 		self_test_flag | DEF_SELFTEST_GYRO_FS);
 	if (result)
 		return result;
 
-	d = DEF_SELFTEST_6500_ACCEL_FS;
+	d = DEF_SELFTEST_20680_ACCEL_FS;
 	d |= self_test_flag;
 	result = inv_plat_single_write(st, REG_ACCEL_CONFIG, d);
 	if (result)
 		return result;
 
 	/* wait for the output to get stable */
-	msleep(DEF_ST_6500_STABLE_TIME);
+	msleep(DEF_ST_20680_STABLE_TIME);
 
 	/* enable FIFO reading */
 	result = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_EN);
@@ -570,8 +572,9 @@ int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
 			 st->hw->name, fifo_count);
 		packet_count = fifo_count / packet_size;
 		i = 0;
-		while ((i < packet_count) && (s < 200 /*st->self_test.samples*/)) {
+		while ((i < packet_count) && (s < 200)) {
 			short vals[3];
+
 			result = inv_plat_read(st, REG_FIFO_R_W,
 				packet_size, data);
 			if (result)

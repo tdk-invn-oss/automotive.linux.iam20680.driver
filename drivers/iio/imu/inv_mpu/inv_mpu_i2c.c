@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2012-2019 InvenSense, Inc.
+* Copyright (C) 2012-2020 InvenSense, Inc.
 *
 * This software is licensed under the terms of the GNU General Public
 * License version 2, as published by the Free Software Foundation, and
@@ -27,6 +27,8 @@
 #include <linux/miscdevice.h>
 #include <linux/spinlock.h>
 #include <linux/of_device.h>
+#include <linux/errno.h>
+#include <linux/version.h>
 
 #include "inv_mpu_iio.h"
 #include "inv_mpu_dts.h"
@@ -290,7 +292,11 @@ static int inv_mpu_probe(struct i2c_client *client,
 		goto out_no_free;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
 	indio_dev = iio_device_alloc(sizeof(*st));
+#else
+	indio_dev = iio_device_alloc(&client->dev, sizeof(*st));
+#endif
 	if (indio_dev == NULL) {
 		pr_err("memory allocation failed\n");
 		result = -ENOMEM;
@@ -298,6 +304,7 @@ static int inv_mpu_probe(struct i2c_client *client,
 	}
 
 	st = iio_priv(indio_dev);
+	mutex_init(&st->lock);
 	st->client = client;
 	st->sl_handle = client->adapter;
 	st->i2c_addr = client->addr;
@@ -310,6 +317,9 @@ static int inv_mpu_probe(struct i2c_client *client,
 #endif
 	st->dev = &client->dev;
 	st->irq = client->irq;
+#if defined(CONFIG_INV_MPU_IIO_ICM43600)
+	st->i2c_dis = BIT_SIFS_CFG_I2C_ONLY;
+#endif
 	st->bus_type = BUS_I2C;
 	i2c_set_clientdata(client, indio_dev);
 	indio_dev->dev.parent = &client->dev;
@@ -394,7 +404,8 @@ out_unreg_ring:
 out_free:
 	iio_device_free(indio_dev);
 out_no_free:
-	dev_err(&client->dev, "%s failed %d\n", __func__, result);
+	if (result != -EPROBE_DEFER)
+		dev_err(&client->dev, "%s failed %d\n", __func__, result);
 	return result;
 }
 
@@ -404,27 +415,17 @@ static void inv_mpu_shutdown(struct i2c_client *client)
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int result;
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	inv_switch_power_in_lp(st, true);
 	dev_dbg(st->dev, "Shutting down %s...\n", st->hw->name);
 
-	/* reset to make sure previous state are not there */
-#if defined(CONFIG_INV_MPU_IIO_ICM42600)
-	result = inv_plat_single_write(st, REG_CHIP_CONFIG_REG, BIT_SOFT_RESET);
-#else
-	result = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_H_RESET);
-#endif
-	if (result)
-		dev_err(st->dev, "Failed to reset %s\n",
-			st->hw->name);
-	msleep(POWER_UP_TIME);
 	/* turn off power to ensure gyro engine is off */
 	result = inv_set_power(st, false);
 	if (result)
 		dev_err(st->dev, "Failed to turn off %s\n",
 			st->hw->name);
 	inv_switch_power_in_lp(st, false);
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 }
 
 /*
@@ -486,6 +487,10 @@ static const struct i2c_device_id inv_mpu_id[] = {
 	{"iam20680", IAM20680},
 	{"icm42600", ICM42600},
 	{"icm42686", ICM42686},
+	{"icm42688", ICM42688},
+	{"icm40609d", ICM40609D},
+	{"icm43600", ICM43600},
+	{"iim42600", ICM42600},
 #endif
 	{}
 };
@@ -519,7 +524,19 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	}, {
 		.compatible = "invensense,icm42686",
 		.data = (void *)ICM42686,
-	},
+	}, {
+		.compatible = "invensense,icm42688",
+		.data = (void *)ICM42688,
+	}, {
+		.compatible = "invensense,icm40609d",
+		.data = (void *)ICM40609D,
+	}, {
+		.compatible = "invensense,icm43600",
+		.data = (void *)ICM43600,
+	}, {
+		.compatible = "invensense,iim42600",
+		.data = (void *)ICM42600,
+        },
 #endif
 	{ }
 };

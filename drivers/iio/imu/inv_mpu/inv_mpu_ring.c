@@ -1,15 +1,15 @@
 /*
-* Copyright (C) 2012-2019 InvenSense, Inc.
-*
-* This software is licensed under the terms of the GNU General Public
-* License version 2, as published by the Free Software Foundation, and
-* may be copied, distributed, and modified under those terms.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*/
+ * Copyright (C) 2012-2021 InvenSense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 #define pr_fmt(fmt) "inv_mpu: " fmt
 
 #include <linux/export.h>
@@ -25,6 +25,7 @@
 #include <linux/kfifo.h>
 #include <linux/poll.h>
 #include <linux/math64.h>
+#include <linux/version.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/buffer.h>
 #include <linux/iio/trigger.h>
@@ -45,9 +46,8 @@ static void inv_push_timestamp(struct iio_dev *indio_dev, u64 t)
 	iio_push_to_buffers(indio_dev, buf);
 }
 
-int inv_push_marker_to_buffer(struct inv_mpu_state *st, u16 hdr, int data)
+int inv_push_marker_to_buffer(struct iio_dev *indio_dev, u16 hdr, int data)
 {
-	struct iio_dev *indio_dev = iio_priv_to_dev(st);
 	u8 buf[IIO_BUFFER_BYTES];
 
 	memcpy(buf, &hdr, sizeof(hdr));
@@ -93,10 +93,10 @@ static s64 calc_frame_ave(struct inv_mpu_state *st, int delay)
 	return ts;
 }
 
-static void inv_push_eis_ring(struct inv_mpu_state *st, int *q, bool sync,
+static void inv_push_eis_ring(struct iio_dev *indio_dev, int *q, bool sync,
 								s64 t)
 {
-	struct iio_dev *indio_dev = iio_priv_to_dev(st);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	struct inv_eis *eis = &st->eis;
 	u8 buf[IIO_BUFFER_BYTES];
 	int tmp, ii;
@@ -115,12 +115,15 @@ static void inv_push_eis_ring(struct inv_mpu_state *st, int *q, bool sync,
 	iio_push_to_buffers(indio_dev, buf);
 	inv_push_timestamp(indio_dev, t);
 }
-static int inv_do_interpolation_gyro(struct inv_mpu_state *st, int *prev,
+
+static int inv_do_interpolation_gyro(struct iio_dev *indio_dev, int *prev,
 	s64 prev_t, int *curr, s64 curr_t, s64 t, bool trigger)
 {
 	int i;
 	int out[3];
 #if defined(CONFIG_INV_MPU_IIO_ICM20648) | defined(CONFIG_INV_MPU_IIO_ICM20690)
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+
 	prev_t -= st->ts_algo.gyro_ts_shift;
 	prev_t += MPU_4X_TS_GYRO_SHIFT;
 	curr_t -= st->ts_algo.gyro_ts_shift;
@@ -141,13 +144,15 @@ static int inv_do_interpolation_gyro(struct inv_mpu_state *st, int *prev,
 	pr_debug("prev = %d, %d, %d\n", prev[0], prev[1], prev[2]);
 	pr_debug("curr = %d, %d, %d\n", curr[0], curr[1], curr[2]);
 	pr_debug("out = %d, %d, %d\n", out[0], out[1], out[2]);
-	inv_push_eis_ring(st, out, trigger, t);
+	inv_push_eis_ring(indio_dev, out, trigger, t);
 
 	return 0;
 }
+
 #if defined(CONFIG_INV_MPU_IIO_ICM20648) | defined(CONFIG_INV_MPU_IIO_ICM20690)
-static void inv_handle_triggered_eis(struct inv_mpu_state *st)
+static void inv_handle_triggered_eis(struct iio_dev *indio_dev)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	struct inv_eis *eis = &st->eis;
 	int delay;
 
@@ -155,26 +160,27 @@ static void inv_handle_triggered_eis(struct inv_mpu_state *st)
 		inv_calc_precision(st);
 		delay = ((int)st->eis.fsync_delay) * st->eis.count_precision;
 		eis->fsync_timestamp = calc_frame_ave(st, delay);
-		inv_do_interpolation_gyro(st,
+		inv_do_interpolation_gyro(indio_dev,
 			st->eis.prev_gyro,    st->eis.prev_timestamp,
 			st->eis.current_gyro, st->eis.current_timestamp,
 			eis->fsync_timestamp, true);
 		pr_debug("fsync=%lld, curr=%lld, delay=%d\n",
 			eis->fsync_timestamp, eis->current_timestamp, delay);
-		inv_push_eis_ring(st, st->eis.current_gyro, false,
+		inv_push_eis_ring(indio_dev, st->eis.current_gyro, false,
 			st->eis.current_timestamp - st->ts_algo.gyro_ts_shift
 						+ MPU_4X_TS_GYRO_SHIFT);
 		eis->last_fsync_timestamp = eis->fsync_timestamp;
 	} else {
 		pr_debug("cur= %lld\n", st->eis.current_timestamp);
-		inv_push_eis_ring(st, st->eis.current_gyro, false,
+		inv_push_eis_ring(indio_dev, st->eis.current_gyro, false,
 			st->eis.current_timestamp - st->ts_algo.gyro_ts_shift
 						+ MPU_4X_TS_GYRO_SHIFT);
 	}
 }
 #else
-static void inv_handle_triggered_eis(struct inv_mpu_state *st)
+static void inv_handle_triggered_eis(struct iio_dev *indio_dev)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	struct inv_eis *eis = &st->eis;
 	int delay;
 
@@ -185,26 +191,27 @@ static void inv_handle_triggered_eis(struct inv_mpu_state *st)
 		inv_calc_precision(st);
 		delay = ((int)st->eis.fsync_delay) * st->eis.count_precision;
 		eis->fsync_timestamp = calc_frame_ave(st, delay);
-		inv_do_interpolation_gyro(st,
+		inv_do_interpolation_gyro(indio_dev,
 			st->eis.prev_gyro,    st->eis.prev_timestamp,
 			st->eis.current_gyro, st->eis.current_timestamp,
 			eis->fsync_timestamp, true);
 		pr_debug("fsync=%lld, curr=%lld, delay=%d\n",
 			eis->fsync_timestamp, eis->current_timestamp, delay);
-		inv_push_eis_ring(st, st->eis.current_gyro, false,
+		inv_push_eis_ring(indio_dev, st->eis.current_gyro, false,
 				st->eis.current_timestamp);
 		eis->last_fsync_timestamp = eis->fsync_timestamp;
 		st->eis.eis_frame = false;
 	} else {
 		st->eis.current_sync = false;
 		pr_debug("cur= %lld\n", st->eis.current_timestamp);
-		inv_push_eis_ring(st, st->eis.current_gyro, false,
+		inv_push_eis_ring(indio_dev, st->eis.current_gyro, false,
 				st->eis.current_timestamp);
 	}
 }
 #endif
-static void inv_push_eis_buffer(struct inv_mpu_state *st, u64 t, int *q)
+static void inv_push_eis_buffer(struct iio_dev *indio_dev, u64 t, int *q)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int ii;
 
 	if (st->eis.eis_triggered) {
@@ -215,17 +222,17 @@ static void inv_push_eis_buffer(struct inv_mpu_state *st, u64 t, int *q)
 		for (ii = 0; ii < 3; ii++)
 			st->eis.current_gyro[ii] = q[ii];
 		st->eis.current_timestamp = t;
-		inv_handle_triggered_eis(st);
+		inv_handle_triggered_eis(indio_dev);
 	} else {
 		for (ii = 0; ii < 3; ii++)
 			st->eis.current_gyro[ii] = q[ii];
 		st->eis.current_timestamp = t;
 	}
 }
-static int inv_push_16bytes_final(struct inv_mpu_state *st, int j,
+static int inv_push_16bytes_final(struct iio_dev *indio_dev, int j,
 						s32 *q, u64 t, s16 accur)
 {
-	struct iio_dev *indio_dev = iio_priv_to_dev(st);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	u8 buf[IIO_BUFFER_BYTES];
 	int ii;
 
@@ -243,9 +250,10 @@ static int inv_push_16bytes_final(struct inv_mpu_state *st, int j,
 
 	return 0;
 }
-int inv_push_16bytes_buffer(struct inv_mpu_state *st, u16 sensor,
+int inv_push_16bytes_buffer(struct iio_dev *indio_dev, u16 sensor,
 				    u64 t, int *q, s16 accur)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int j;
 
 	for (j = 0; j < SENSOR_L_NUM_MAX; j++) {
@@ -260,14 +268,14 @@ int inv_push_16bytes_buffer(struct inv_mpu_state *st, u16 sensor,
 					st->sensor_l[j].header,
 					st->sensor_l[j].div,
 					t, q[0], q[1], q[2]);
-				inv_push_16bytes_final(st, j, q, t, accur);
+				inv_push_16bytes_final(indio_dev, j, q, t, accur);
 			}
 		}
 	}
 	return 0;
 }
 
-void inv_convert_and_push_16bytes(struct inv_mpu_state *st, u16 hdr,
+void inv_convert_and_push_16bytes(struct iio_dev *indio_dev, u16 hdr,
 							u8 *d, u64 t, s8 *m)
 {
 	int i, j;
@@ -281,11 +289,11 @@ void inv_convert_and_push_16bytes(struct inv_mpu_state *st, u16 hdr,
 			if (m[i * 3 + j])
 				out[i] = in[j] * m[i * 3 + j];
 
-	inv_push_16bytes_buffer(st, hdr, t, out, 0);
+	inv_push_16bytes_buffer(indio_dev, hdr, t, out, 0);
 }
 
-void inv_convert_and_push_8bytes(struct inv_mpu_state *st, u16 hdr,
-						u8 *d, u64 t, s8 *m)
+void inv_convert_and_push_8bytes(struct iio_dev *indio_dev, u16 hdr,
+				 u8 *d, u64 t, s8 *m)
 {
 	int i, j;
 	s16 in[3], out[3];
@@ -299,13 +307,12 @@ void inv_convert_and_push_8bytes(struct inv_mpu_state *st, u16 hdr,
 			if (m[i * 3 + j])
 				out[i] = in[j] * m[i * 3 + j];
 
-	inv_push_8bytes_buffer(st, hdr, t, out);
+	inv_push_8bytes_buffer(indio_dev, hdr, t, out);
 }
 
-int inv_push_special_8bytes_buffer(struct inv_mpu_state *st,
-				   u16 hdr, u64 t, s16 *d)
+static int inv_push_special_8bytes_buffer(struct iio_dev *indio_dev,
+					  u16 hdr, u64 t, s16 *d)
 {
-	struct iio_dev *indio_dev = iio_priv_to_dev(st);
 	u8 buf[IIO_BUFFER_BYTES];
 	int j;
 
@@ -319,13 +326,15 @@ int inv_push_special_8bytes_buffer(struct inv_mpu_state *st,
 	return 0;
 }
 
-static int inv_s32_gyro_push(struct inv_mpu_state *st, int i, s32 *calib, u64 t)
+static int inv_s32_gyro_push(struct iio_dev *indio_dev, int i, s32 *calib, u64 t)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+
 	if (st->sensor_l[i].on) {
 		st->sensor_l[i].counter++;
 		if ((st->sensor_l[i].div != 0xffff) &&
 			(st->sensor_l[i].counter >= st->sensor_l[i].div)) {
-			inv_push_16bytes_final(st, i, calib, t, 0);
+			inv_push_16bytes_final(indio_dev, i, calib, t, 0);
 			st->sensor_l[i].counter = 0;
 			if (st->sensor_l[i].wake_on)
 				st->wake_sensor_received = true;
@@ -335,25 +344,26 @@ static int inv_s32_gyro_push(struct inv_mpu_state *st, int i, s32 *calib, u64 t)
 	return 0;
 }
 
-int inv_push_gyro_data(struct inv_mpu_state *st, s32 *raw, s32 *calib, u64 t)
+int inv_push_gyro_data(struct iio_dev *indio_dev, s32 *raw, s32 *calib, u64 t)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int gyro_data[] = {SENSOR_L_GYRO, SENSOR_L_GYRO_WAKE};
 	int calib_data[] = {SENSOR_L_GYRO_CAL, SENSOR_L_GYRO_CAL_WAKE};
 	int i;
 
 	if (st->sensor_l[SENSOR_L_EIS_GYRO].on)
-		inv_push_eis_buffer(st, t, calib);
+		inv_push_eis_buffer(indio_dev, t, calib);
 
 	for (i = 0; i < 2; i++)
-		inv_s32_gyro_push(st, gyro_data[i], raw, t);
+		inv_s32_gyro_push(indio_dev, gyro_data[i], raw, t);
 	for (i = 0; i < 2; i++)
-		inv_s32_gyro_push(st, calib_data[i], calib, t);
+		inv_s32_gyro_push(indio_dev, calib_data[i], calib, t);
 
 	return 0;
 }
-int inv_push_8bytes_buffer(struct inv_mpu_state *st, u16 sensor, u64 t, s16 *d)
+int inv_push_8bytes_buffer(struct iio_dev *indio_dev, u16 sensor, u64 t, s16 *d)
 {
-	struct iio_dev *indio_dev = iio_priv_to_dev(st);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	u8 buf[IIO_BUFFER_BYTES];
 	int ii, j;
 
@@ -446,9 +456,9 @@ char *inv_tilt_check(s16 data)
 		return "None";
 }
 
-int inv_push_8bytes_kf(struct inv_mpu_state *st, u16 hdr, u64 t, s16 *d)
+int inv_push_8bytes_kf(struct iio_dev *indio_dev, u16 hdr, u64 t, s16 *d)
 {
-	struct iio_dev *indio_dev = iio_priv_to_dev(st);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	u8 buf[IIO_BUFFER_BYTES];
 	int i;
 
@@ -490,24 +500,25 @@ int inv_push_8bytes_kf(struct inv_mpu_state *st, u16 hdr, u64 t, s16 *d)
 }
 #endif
 
-int inv_send_steps(struct inv_mpu_state *st, int step, u64 ts)
+int inv_send_steps(struct iio_dev *indio_dev, int step, u64 ts)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	s16 s[3];
 
 	s[0] = 0;
 	s[1] = (s16) (step & 0xffff);
 	s[2] = (s16) ((step >> 16) & 0xffff);
 	if (st->step_counter_l_on)
-		inv_push_special_8bytes_buffer(st, STEP_COUNTER_HDR, ts, s);
+		inv_push_special_8bytes_buffer(indio_dev, STEP_COUNTER_HDR, ts, s);
 	if (st->step_counter_wake_l_on) {
-		inv_push_special_8bytes_buffer(st, STEP_COUNTER_WAKE_HDR,
+		inv_push_special_8bytes_buffer(indio_dev, STEP_COUNTER_WAKE_HDR,
 					       ts, s);
 		st->wake_sensor_received = true;
 	}
 	return 0;
 }
 
-void inv_push_step_indicator(struct inv_mpu_state *st, u64 t)
+void inv_push_step_indicator(struct iio_dev *indio_dev, u64 t)
 {
 	s16 sen[3];
 #define STEP_INDICATOR_HEADER 0x0001
@@ -515,7 +526,7 @@ void inv_push_step_indicator(struct inv_mpu_state *st, u64 t)
 	sen[0] = 0;
 	sen[1] = 0;
 	sen[2] = 0;
-	inv_push_8bytes_buffer(st, STEP_INDICATOR_HEADER, t, sen);
+	inv_push_8bytes_buffer(indio_dev, STEP_INDICATOR_HEADER, t, sen);
 }
 
 #ifdef TIMER_BASED_BATCHING
@@ -563,8 +574,16 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 		return ret;
 	}
 
-	st->trig = iio_trigger_alloc("%s-dev%d", indio_dev->name,
+	st->trig = iio_trigger_alloc(
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0)
+				     st->dev,
+#endif
+				    "%s-dev%d", indio_dev->name,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 				     indio_dev->id);
+#else
+				     iio_device_id(indio_dev));
+#endif
 	if (st->trig == NULL) {
 		ret = -ENOMEM;
 		dev_err(st->dev, "iio trigger alloc error\n");

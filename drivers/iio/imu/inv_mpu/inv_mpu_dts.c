@@ -325,15 +325,15 @@ int invensense_mpu_parse_dt(struct device *dev, struct mpu_platform_data *pdata)
 	inv_parse_readonly_secondary(dev, pdata);
 
 	pdata->vdd_ana = regulator_get(dev, "inven,vdd_ana");
-	if (IS_ERR(pdata->vdd_ana)) {
-		rc = PTR_ERR(pdata->vdd_ana);
-		dev_warn(dev, "regulator get failed vdd_ana-supply rc=%d\n", rc);
-	}
+	if (IS_ERR(pdata->vdd_ana))
+		return PTR_ERR(pdata->vdd_ana);
+
 	pdata->vdd_i2c = regulator_get(dev, "inven,vcc_i2c");
 	if (IS_ERR(pdata->vdd_i2c)) {
-		rc = PTR_ERR(pdata->vdd_i2c);
-		dev_warn(dev, "regulator get failed vcc-i2c-supply rc=%d\n", rc);
+		regulator_put(pdata->vdd_ana);
+		return PTR_ERR(pdata->vdd_i2c);
 	}
+
 	pdata->power_on = inv_mpu_power_on;
 	pdata->power_off = inv_mpu_power_off;
 	dev_dbg(dev, "parse dt complete\n");

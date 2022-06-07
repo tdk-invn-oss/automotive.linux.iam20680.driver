@@ -1,15 +1,15 @@
 /*
-* Copyright (C) 2017-2019 InvenSense, Inc.
-*
-* This software is licensed under the terms of the GNU General Public
-* License version 2, as published by the Free Software Foundation, and
-* may be copied, distributed, and modified under those terms.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*/
+ * Copyright (C) 2017-2020 InvenSense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 #define pr_fmt(fmt) "inv_mpu: " fmt
 #include "../inv_mpu_iio.h"
 
@@ -47,12 +47,11 @@ static int inv_turn_on_fifo(struct inv_mpu_state *st)
 #ifdef TIMER_BASED_BATCHING
 	if (st->chip_config.eis_enable)
 		int_en |= BIT_FSYNC_INT_EN;
-	if (!st->batch_timeout) {
+	if (!st->batch_timeout)
 		int_en |= BIT_DATA_RDY_EN;
-	}
 #else
 	if (st->batch.timeout) {
-		if(!st->batch.fifo_wm_th)
+		if (!st->batch.fifo_wm_th)
 			int_en = BIT_DATA_RDY_EN;
 	} else {
 		int_en = BIT_DATA_RDY_EN;
@@ -72,11 +71,10 @@ static int inv_turn_on_fifo(struct inv_mpu_state *st)
 	r = inv_plat_single_write(st, REG_INT_ENABLE, int_en);
 	if (r)
 		return r;
-	if (st->gesture_only_on && (!st->batch.timeout)) {
+	if (st->gesture_only_on && (!st->batch.timeout))
 		mode = BIT_ACCEL_INTEL_EN | BIT_ACCEL_INTEL_MODE;
-	} else {
+	else
 		mode = 0;
-	}
 	r = inv_plat_single_write(st, REG_ACCEL_INTEL_CTRL, mode);
 #ifdef SENSOR_DATA_FROM_REGISTERS
 	user = 0;
@@ -87,13 +85,13 @@ static int inv_turn_on_fifo(struct inv_mpu_state *st)
 #ifdef TIMER_BASED_BATCHING
 	if (fifo_en && st->batch_timeout) {
 		if (st->is_batch_timer_running)
-			hrtimer_cancel(&st ->hr_batch_timer);
+			hrtimer_cancel(&st->hr_batch_timer);
 		st->is_batch_timer_running = true;
-		hrtimer_start(&st ->hr_batch_timer,
+		hrtimer_start(&st->hr_batch_timer,
 			ns_to_ktime(st->batch_timeout), HRTIMER_MODE_REL);
 	} else {
 		if (st->is_batch_timer_running)
-			hrtimer_cancel(&st ->hr_batch_timer);
+			hrtimer_cancel(&st->hr_batch_timer);
 		st->is_batch_timer_running = false;
 	}
 #endif
@@ -172,7 +170,7 @@ static int inv_turn_on_engine(struct inv_mpu_state *st)
 	}
 	if (st->chip_config.accel_enable
 		&& (v & BIT_PWR_ACCEL_STBY)) {
-		if (INV_IAM20680_ACCEL_START_TIME > wait_ms)
+		if (wait_ms < INV_IAM20680_ACCEL_START_TIME)
 			wait_ms = INV_IAM20680_ACCEL_START_TIME;
 	}
 	if (wait_ms)
@@ -198,7 +196,7 @@ static int inv_setup_dmp_rate(struct inv_mpu_state *st)
 		if (st->sensor[i].on) {
 			st->cntl |= st->sensor[i].output;
 			st->sensor[i].dur =
-				st->eng_info[st->sensor[i].engine_base].dur;
+				st->eng_info[st->ts_algo.clock_base].dur;
 			st->sensor[i].div = 1;
 		}
 	}
@@ -234,6 +232,7 @@ static int inv_set_lpf(struct inv_mpu_state *st, int rate)
 
 		st->chip_config.lpf = data;
 		result = inv_plat_single_write(st, REG_LP_MODE_CTRL, 0);
+		st->gyro_lp_mode = 0;
 	} else {
 		result = inv_plat_single_write(st, REG_LP_MODE_CTRL,
 							BIT_GYRO_CYCLE_EN);
@@ -241,6 +240,7 @@ static int inv_set_lpf(struct inv_mpu_state *st, int rate)
 			return result;
 		data = 0;
 		result = inv_plat_single_write(st, REG_CONFIG, data | 3);
+		st->gyro_lp_mode = 1;
 	}
 
 	return result;
@@ -331,8 +331,7 @@ static int inv_determine_engine(struct inv_mpu_state *st)
 	g_en = false;
 	gyro_rate = MPU_INIT_SENSOR_RATE;
 	accel_rate = MPU_INIT_SENSOR_RATE;
-	/* loop the streaming sensors to see which engine needs to be turned on
-		*/
+	/* loop the streaming sensors to see which engine needs to be turned on */
 	for (i = 0; i < SENSOR_NUM_MAX; i++) {
 		if (st->sensor[i].on) {
 			a_en |= st->sensor[i].a_en;
@@ -382,7 +381,7 @@ static int inv_determine_engine(struct inv_mpu_state *st)
 		st->eng_info[ENGINE_GYRO].divider = 1;
 		st->eng_info[ENGINE_ACCEL].divider = 1;
 		// need to update rate and div for 1khz mode
-		for ( i = 0 ; i < SENSOR_L_NUM_MAX ; i++ ) {
+		for (i = 0 ; i < SENSOR_L_NUM_MAX ; i++) {
 			if (st->sensor_l[i].on) {
 				st->sensor_l[i].counter = 0;
 				if (st->sensor_l[i].rate)
@@ -400,7 +399,7 @@ static int inv_determine_engine(struct inv_mpu_state *st)
 			st->eng_info[ENGINE_ACCEL].running_rate;
 	}
 
-	for ( i = 0 ; i < SENSOR_L_NUM_MAX ; i++ )
+	for (i = 0 ; i < SENSOR_L_NUM_MAX ; i++)
 		st->sensor_l[i].counter = 0;
 
 	inv_calc_engine_dur(&st->eng_info[ENGINE_GYRO]);

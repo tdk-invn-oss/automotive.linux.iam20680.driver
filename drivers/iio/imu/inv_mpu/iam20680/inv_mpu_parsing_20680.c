@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2019 InvenSense, Inc.
+ * Copyright (C) 2017-2020 InvenSense, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -48,8 +48,9 @@ static int inv_check_fsync(struct inv_mpu_state *st)
 	return 0;
 }
 
-static int inv_push_sensor(struct inv_mpu_state *st, int ind, u64 t, u8 *d)
+static int inv_push_sensor(struct iio_dev *indio_dev, int ind, u64 t, u8 *d)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int i;
 	s32 raw[3];
 	s32 calib[3] = { 0, 0, 0 };
@@ -58,7 +59,7 @@ static int inv_push_sensor(struct inv_mpu_state *st, int ind, u64 t, u8 *d)
 	case SENSOR_ACCEL:
 		for (i = 0; i < 3; i++)
 			raw[i] = (s16)be16_to_cpup((__be16 *) (d + i * 2));
-		inv_push_16bytes_buffer(st, ind, t, raw, 0);
+		inv_push_16bytes_buffer(indio_dev, ind, t, raw, 0);
 		break;
 	case SENSOR_TEMP:
 		inv_check_fsync(st);
@@ -66,7 +67,7 @@ static int inv_push_sensor(struct inv_mpu_state *st, int ind, u64 t, u8 *d)
 	case SENSOR_GYRO:
 		for (i = 0; i < 3; i++)
 			raw[i] = (s16)be16_to_cpup((__be16 *) (d + i * 2));
-		inv_push_gyro_data(st, raw, calib, t);
+		inv_push_gyro_data(indio_dev, raw, calib, t);
 		break;
 	default:
 		break;
@@ -75,8 +76,9 @@ static int inv_push_sensor(struct inv_mpu_state *st, int ind, u64 t, u8 *d)
 	return 0;
 }
 
-static int inv_push_20680_data(struct inv_mpu_state *st, u8 *d)
+static int inv_push_20680_data(struct iio_dev *indio_dev, u8 *d)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	u8 *dptr;
 	int i;
 
@@ -87,7 +89,7 @@ static int inv_push_20680_data(struct inv_mpu_state *st, u8 *d)
 			inv_get_dmp_ts(st, i);
 			if (st->sensor[i].send && (!st->ts_algo.first_sample)) {
 				st->sensor[i].sample_calib++;
-				inv_push_sensor(st, i, st->sensor[i].ts, dptr);
+				inv_push_sensor(indio_dev, i, st->sensor[i].ts, dptr);
 			}
 			dptr += st->sensor[i].sample_size;
 		}
@@ -99,8 +101,9 @@ static int inv_push_20680_data(struct inv_mpu_state *st, u8 *d)
 	return 0;
 }
 
-static int inv_process_20680_data(struct inv_mpu_state *st)
+static int inv_process_20680_data(struct iio_dev *indio_dev)
 {
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int total_bytes, tmp, res, fifo_count, pk_size, i;
 	u8 *dptr, *d;
 	u8 data[14];
@@ -134,7 +137,8 @@ static int inv_process_20680_data(struct inv_mpu_state *st)
 				if (res)
 					return res;
 				/* First time wake up from WOM.
-					We don't need data in the FIFO */
+				 * We don't need data in the FIFO
+				 */
 				res = inv_reset_fifo(st, true);
 				if (res)
 					return res;
@@ -169,7 +173,8 @@ static int inv_process_20680_data(struct inv_mpu_state *st)
 		return -EINVAL;
 
 	if (fifo_count >= (HARDWARE_FIFO_SIZE / st->batch.pk_size)) {
-		pr_warn("fifo overflow pkt count=%d pkt sz=%d\n", fifo_count, st->batch.pk_size);
+		pr_warn("fifo overflow pkt count=%d pkt sz=%d\n",
+				fifo_count, st->batch.pk_size);
 		return -EOVERFLOW;
 	}
 
@@ -241,26 +246,29 @@ static int inv_process_20680_data(struct inv_mpu_state *st)
 			pr_err("read REG_FIFO_R_W is failed\n");
 			return res;
 		}
-		pr_debug("inside: %x, %x, %x, %x, %x, %x, %x, %x\n", dptr[0], dptr[1], dptr[2],
-						dptr[3], dptr[4], dptr[5], dptr[6], dptr[7]);
-		pr_debug("insid2: %x, %x, %x, %x, %x, %x, %x, %x\n", dptr[8], dptr[9], dptr[10],
-						dptr[11], dptr[12], dptr[13], dptr[14], dptr[15]);
+		pr_debug("inside: %x, %x, %x, %x, %x, %x, %x, %x\n",
+				dptr[0], dptr[1], dptr[2], dptr[3],
+				dptr[4], dptr[5], dptr[6], dptr[7]);
+		pr_debug("insid2: %x, %x, %x, %x, %x, %x, %x, %x\n",
+				dptr[8], dptr[9], dptr[10], dptr[11],
+				dptr[12], dptr[13], dptr[14], dptr[15]);
 
 		dptr += tmp;
 		total_bytes -= tmp;
 	}
 #endif /* SENSOR_DATA_FROM_REGISTERS */
 	dptr = d;
-	pr_debug("dd: %x, %x, %x, %x, %x, %x, %x, %x\n", d[0], d[1], d[2],
-						d[3], d[4], d[5], d[6], d[7]);
-	pr_debug("dd2: %x, %x, %x, %x, %x, %x, %x, %x\n", d[8], d[9], d[10],
-					d[11], d[12], d[13], d[14], d[15]);
+	pr_debug("dd: %x, %x, %x, %x, %x, %x, %x, %x\n",
+			d[0], d[1], d[2], d[3],
+			d[4], d[5], d[6], d[7]);
+	pr_debug("dd2: %x, %x, %x, %x, %x, %x, %x, %x\n",
+			d[8], d[9], d[10], d[11],
+			d[12], d[13], d[14], d[15]);
 	total_bytes = fifo_count;
 
 	for (i = 0; i < SENSOR_NUM_MAX; i++) {
-		if (st->sensor[i].on) {
+		if (st->sensor[i].on)
 			st->sensor[i].count =  total_bytes / pk_size;
-		}
 	}
 	st->header_count = 0;
 	for (i = 0; i < SENSOR_NUM_MAX; i++) {
@@ -278,7 +286,7 @@ static int inv_process_20680_data(struct inv_mpu_state *st)
 	while (!done_flag) {
 		pr_debug("total%d, pk=%d\n", total_bytes, pk_size);
 		if (total_bytes >= pk_size) {
-			res = inv_push_20680_data(st, dptr);
+			res = inv_push_20680_data(indio_dev, dptr);
 			if (res)
 				return res;
 			total_bytes -= pk_size;
@@ -294,16 +302,16 @@ static int inv_process_20680_data(struct inv_mpu_state *st)
 /*
  *  _inv_read_fifo() - Transfer data from FIFO to ring buffer.
  */
-static void _inv_read_fifo(struct inv_mpu_state *st)
+static void _inv_read_fifo(struct iio_dev *indio_dev)
 {
-	struct iio_dev *indio_dev = iio_priv_to_dev(st);
+	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int result;
 
 	result = wait_event_interruptible_timeout(st->wait_queue,
 					st->resume_state, msecs_to_jiffies(300));
 	if (result <= 0)
 		return;
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 #ifdef TIMER_BASED_BATCHING
 	if (st->batch_timeout) {
 		if (inv_plat_single_write(st, REG_INT_ENABLE, st->int_en))
@@ -311,10 +319,10 @@ static void _inv_read_fifo(struct inv_mpu_state *st)
 	}
 #endif
 	st->wake_sensor_received = false;
-	result = inv_process_20680_data(st);
+	result = inv_process_20680_data(indio_dev);
 	if (result)
 		goto err_reset_fifo;
-	mutex_unlock(&indio_dev->mlock);
+	mutex_unlock(&st->lock);
 
 	if (st->wake_sensor_received)
 #ifdef CONFIG_HAS_WAKELOCK
@@ -330,7 +338,7 @@ err_reset_fifo:
 		(!st->chip_config.slave_enable) &&
 		(!st->chip_config.pressure_enable)) {
 		inv_switch_power_in_lp(st, false);
-		mutex_unlock(&indio_dev->mlock);
+		mutex_unlock(&st->lock);
 
 		return;
 	}
@@ -339,18 +347,15 @@ err_reset_fifo:
 	inv_switch_power_in_lp(st, true);
 	inv_reset_fifo(st, true);
 	inv_switch_power_in_lp(st, false);
-	mutex_unlock(&indio_dev->mlock);
-
-	return;
+	mutex_unlock(&st->lock);
 }
 
 irqreturn_t inv_read_fifo(int irq, void *p)
 {
 	struct iio_poll_func *pf = p;
 	struct iio_dev *indio_dev = pf->indio_dev;
-	struct inv_mpu_state *st = iio_priv(indio_dev);
 
-	_inv_read_fifo(st);
+	_inv_read_fifo(indio_dev);
 	iio_trigger_notify_done(indio_dev->trig);
 
 	return IRQ_HANDLED;
@@ -361,14 +366,11 @@ void inv_batch_work(struct work_struct *work)
 {
 	struct inv_mpu_state *st =
 		container_of(work, struct inv_mpu_state, batch_work);
-	struct iio_dev *indio_dev = iio_priv_to_dev(st);
 
-	mutex_lock(&indio_dev->mlock);
+	mutex_lock(&st->lock);
 	if (inv_plat_single_write(st, REG_INT_ENABLE, st->int_en | BIT_DATA_RDY_EN))
 		pr_err("REG_INT_ENABLE write error\n");
-	mutex_unlock(&indio_dev->mlock);
-
-	return;
+	mutex_unlock(&st->lock);
 }
 #endif
 
@@ -382,7 +384,7 @@ int inv_flush_batch_data(struct iio_dev *indio_dev, int data)
 		st->chip_config.slave_enable ||
 		st->chip_config.pressure_enable) {
 		st->wake_sensor_received = false;
-		inv_process_20680_data(st);
+		inv_process_20680_data(indio_dev);
 		if (st->wake_sensor_received)
 #ifdef CONFIG_HAS_WAKELOCK
 			wake_lock_timeout(&st->wake_lock, msecs_to_jiffies(200));
@@ -392,8 +394,7 @@ int inv_flush_batch_data(struct iio_dev *indio_dev, int data)
 		inv_switch_power_in_lp(st, false);
 	}
 #endif /* SENSOR_DATA_FROM_REGISTERS */
-	inv_push_marker_to_buffer(st, END_MARKER, data);
+	inv_push_marker_to_buffer(indio_dev, END_MARKER, data);
 
 	return 0;
 }
-
