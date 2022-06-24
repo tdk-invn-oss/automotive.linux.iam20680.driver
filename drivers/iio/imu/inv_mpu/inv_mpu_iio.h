@@ -58,7 +58,7 @@
 #include "icm43600/inv_mpu_iio_reg_43600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"9.6.0"
+#define INVENSENSE_DRIVER_VERSION		"9.6.1"
 
 /* #define DEBUG */
 

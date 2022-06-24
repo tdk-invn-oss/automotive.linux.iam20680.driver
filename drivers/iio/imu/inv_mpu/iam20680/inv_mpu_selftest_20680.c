@@ -351,12 +351,12 @@ int inv_check_gyro_self_test(struct inv_mpu_state *st,
 		st_shift_cust[i] = st_avg[i] - reg_avg[i];
 		if (!otp_value_zero) {
 			/* Self Test Pass/Fail Criteria A */
-			if (st_shift_cust[i] < DEF_GYRO_CT_SHIFT_DELTA *
+			if (st_shift_cust[i] <= DEF_GYRO_CT_SHIFT_DELTA *
 					st_shift_prod[i])
 				ret_val = 1;
 		} else {
 			/* Self Test Pass/Fail Criteria B */
-			if (st_shift_cust[i] < DEF_GYRO_ST_AL *
+			if (abs(st_shift_cust[i]) < DEF_GYRO_ST_AL *
 						DEF_SELFTEST_GYRO_SENS *
 						DEF_ST_PRECISION)
 				ret_val = 1;
@@ -390,7 +390,7 @@ int inv_check_accel_self_test(struct inv_mpu_state *st,
 						int *reg_avg, int *st_avg)
 {
 	int ret_val, result;
-	int st_shift_prod[3], st_shift_cust[3], st_shift_ratio[3], i;
+	int st_shift_prod[3], st_shift_cust[3], i;
 	u8 regs[3];
 	int otp_value_zero = 0;
 
@@ -413,21 +413,17 @@ int inv_check_accel_self_test(struct inv_mpu_state *st,
 		st->hw->name, st_shift_prod[0], st_shift_prod[1],
 		st_shift_prod[2]);
 
-	if (!otp_value_zero) {
-		/* Self Test Pass/Fail Criteria A */
-		for (i = 0; i < 3; i++) {
-			st_shift_cust[i] = st_avg[i] - reg_avg[i];
-			st_shift_ratio[i] = abs(st_shift_cust[i] /
-					st_shift_prod[i] - DEF_ST_PRECISION);
-			if (st_shift_ratio[i] > DEF_ACCEL_ST_SHIFT_DELTA)
+	for (i = 0; i < 3; i++) {
+		st_shift_cust[i] = st_avg[i] - reg_avg[i];
+		if (!otp_value_zero) {
+			/* Self Test Pass/Fail Criteria A */
+			if (st_shift_cust[i] <= DEF_ACCEL_ST_SHIFT_DELTA_MIN * st_shift_prod[i] ||
+					st_shift_cust[i] >= DEF_ACCEL_ST_SHIFT_DELTA_MAX * st_shift_prod[i])
 				ret_val = 1;
-		}
-	} else {
-		/* Self Test Pass/Fail Criteria B */
-		for (i = 0; i < 3; i++) {
-			st_shift_cust[i] = abs(st_avg[i] - reg_avg[i]);
-			if (st_shift_cust[i] < ACCEL_ST_AL_MIN ||
-					st_shift_cust[i] > ACCEL_ST_AL_MAX)
+		} else {
+			/* Self Test Pass/Fail Criteria B */
+			if (abs(st_shift_cust[i]) < ACCEL_ST_AL_MIN ||
+					abs(st_shift_cust[i]) > ACCEL_ST_AL_MAX)
 				ret_val = 1;
 		}
 	}
