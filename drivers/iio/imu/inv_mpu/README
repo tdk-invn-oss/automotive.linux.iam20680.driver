@@ -39,55 +39,56 @@ Dts file
 In order to recognize the Invensense device on the I2C/SPI bus, dts(or dtsi)
 file must be modified.
 
-Example)
-ICM20648 + AK09911/BMP280/APDS9930 on AUX I2C
+Example for IAM-20680 on I2C and on SPI
 
-    i2c@f9968000 {
-        /* Invensense */
-        mpu6515_acc@68 {
-            compatible = "inven,icm20648";
-            reg = <0x68>;
-            interrupt-parent = <&msmgpio>;
-            interrupts = <73 0x2>;
-            inven,vdd_ana-supply = <&pm8941_l17>;
-            inven,vcc_i2c-supply = <&pm8941_lvs1>;
-            inven,gpio_int1 = <&msmgpio 73 0x00>;
-            fs_range = <0x00>;
-            /* mount matrix */
-            axis_map_x = <1>;
-            axis_map_y = <0>;
-            axis_map_z = <2>;
-            negate_x = <0>;
-            negate_y = <0>;
-            negate_z = <1>;
-            poll_interval = <200>;
-            min_interval = <5>;
-            inven,secondary_reg = <0x0c>;
-            /* If no compass sensor,
-             * replace "compass" with "none"
-             */
-            inven,secondary_type = "compass";
-            inven,secondary_name = "ak09911";
-            inven,secondary_axis_map_x = <1>;
-            inven,secondary_axis_map_y = <0>;
-            inven,secondary_axis_map_z = <2>;
-            inven,secondary_negate_x = <1>;
-            inven,secondary_negate_y = <1>;
-            inven,secondary_negate_z = <1>;
-            /* If no pressure sensor,
-             * replace "pressure" with "none"
-             */
-            inven,aux_type = "pressure";
-            inven,aux_name = "bmp280";
-            inven,aux_reg = <0x76>;
-            /* If no ALS sensor
-             * replace "als" with "none"
-             */
-            inven,read_only_slave_type = "als";
-            inven,read_only_slave_name = "apds9930";
-            inven,read_only_slave_reg = <0x39>;
-        };
-    };
+&invn_i2c {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	invn_icm_i2c: iam20680@68 {
+		compatible = "invensense,iam20680";
+		reg = <0x68>;
+		interrupt-parent = <&invn_gpio>;
+		interrupts = <0 IRQ_TYPE_EDGE_RISING>;
+		inven,vdd_ana-supply = <&invn_vdd>;
+		inven,vcc_i2c-supply = <&invn_vddio>;
+		/* mount matrix */
+		axis_map_x = <1>;
+		axis_map_y = <0>;
+		axis_map_z = <2>;
+		negate_x = <0>;
+		negate_y = <0>;
+		negate_z = <1>;
+		inven,secondary_type = "none";
+		inven,aux_type = "none";
+		inven,read_only_slave_type = "none";
+	};
+};
+
+&invn_spi {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	invn_icm_spi: iam20680@0 {
+		compatible = "invensense,iam20680";
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+		interrupt-parent = <&invn_gpio>;
+		interrupts = <0 IRQ_TYPE_EDGE_RISING>;
+		inven,vdd_ana-supply = <&invn_vdd>;
+		inven,vcc_i2c-supply = <&invn_vddio>;
+		/* mount matrix */
+		axis_map_x = <1>;
+		axis_map_y = <0>;
+		axis_map_z = <2>;
+		negate_x = <1>;
+		negate_y = <0>;
+		negate_z = <0>;
+		inven,secondary_type = "none";
+		inven,aux_type = "none";
+		inven,read_only_slave_type = "none";
+	};
+};
 
 
 Communicating with the Driver in Userspace
