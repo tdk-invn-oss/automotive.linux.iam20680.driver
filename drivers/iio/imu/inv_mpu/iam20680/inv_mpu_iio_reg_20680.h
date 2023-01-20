@@ -235,6 +235,7 @@ enum inv_devices {
 	ICM42688,
 	ICM40609D,
 	ICM43600,
+	ICM45600,
 	INV_NUM_PARTS,
 };
 #endif

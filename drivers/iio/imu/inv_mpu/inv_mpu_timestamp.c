@@ -30,7 +30,7 @@
 
 #define INV_TIME_CALIB_THRESHOLD_1 2
 
-#define MIN_DELAY (3 * NSEC_PER_MSEC)
+#define MIN_DELAY (1 * NSEC_PER_MSEC)
 #define JITTER_THRESH (1 * NSEC_PER_MSEC)
 
 int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
@@ -205,7 +205,8 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 #else
 	/* for no DMP devices */
 #if defined(CONFIG_INV_MPU_IIO_ICM42600) || \
-	defined(CONFIG_INV_MPU_IIO_ICM43600)
+	defined(CONFIG_INV_MPU_IIO_ICM43600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM45600)
 	expected_upper_duration =
 		st->eng_info[st->sensor[i].engine_base].dur / 1000 * 1020;
 	expected_lower_duration =

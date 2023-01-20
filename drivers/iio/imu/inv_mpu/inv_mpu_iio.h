@@ -56,9 +56,11 @@
 #include "icm42600/inv_mpu_iio_reg_42600.h"
 #elif defined(CONFIG_INV_MPU_IIO_ICM43600)
 #include "icm43600/inv_mpu_iio_reg_43600.h"
+#elif defined(CONFIG_INV_MPU_IIO_ICM45600)
+#include "icm45600/inv_mpu_iio_reg_45600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"9.6.1"
+#define INVENSENSE_DRIVER_VERSION		"10.0.4"
 
 /* #define DEBUG */
 
@@ -599,17 +601,21 @@ struct inv_timestamp_algo {
 	u32 first_drop_samples[SENSOR_NUM_MAX];
 };
 
-#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600)
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
 /**
  *	struct inv_apex_data - apex gesture algo data .
  *	@step_cnt_total: step count total.
  *	@step_cnt_last_val: previous step count value from chip.
  *	@step_reset_last_val: check if it is first time after step count reset.
+ *	@step_wptr: for Newport, step counter ring buffer read pointer.
+ *	@step_rptr: for Newport, step counter ring buffer write pointer.
  */
 struct inv_apex_data {
 	uint32_t step_cnt_total;
 	uint32_t step_cnt_last_val;
 	bool step_reset_last_val;
+	u8 step_wptr;
+	u8 step_rptr;
 };
 #endif
 
@@ -645,6 +651,7 @@ struct inv_mpu_slave;
  *  @sensor{SENSOR_NUM_MAX]: sensor individual properties.
  *  @sensor_l[SENSOR_L_NUM_MAX]: android L sensors properties.
  *  @sensor_accuracy[SENSOR_ACCURACY_NUM_MAX]: sensor accuracy.
+ *  @ois:   OIS data structure.
  *  @sensor_acurracy_flag: flag indiciate whether to check output accuracy.
  *  @irq:               irq number store.
  *  @accel_bias:        accel bias store.
@@ -654,6 +661,7 @@ struct inv_mpu_slave;
  *  @gyro_ois_st_bias:  gyro bias store from ois self test result.
  *  @gyro_lp_mode:  gyro low power mode on/off.
  *  @accel_lp_mode:  accel low power mode on/off.
+ *  @prev_pressure: store previous valid pressure sensor data.
  *  @input_accel_dmp_bias[3]: accel bias for dmp.
  *  @input_gyro_dmp_bias[3]: gyro bias for dmp.
  *  @input_compass_dmp_bias[3]: compass bias for dmp.
@@ -762,7 +770,7 @@ struct inv_mpu_state {
 	struct inv_mpu_slave *slave_als;
 	struct inv_secondary_reg slv_reg[4];
 	struct inv_timestamp_algo ts_algo;
-#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600)
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
 	bool apex_supported;
 	bool smd_supported;
 	struct inv_apex_data apex_data;
@@ -801,6 +809,7 @@ struct inv_mpu_state {
 	int gyro_ois_st_bias[3];
 	int gyro_lp_mode;
 	int accel_lp_mode;
+	int prev_pressure;
 	int input_accel_dmp_bias[3];
 	int input_gyro_dmp_bias[3];
 	int input_compass_dmp_bias[3];

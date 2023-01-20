@@ -257,6 +257,8 @@ static int inv_parse_aux(struct device *dev, struct mpu_platform_data *pdata)
 	}
 	if (!strcmp(name, "bmp280"))
 		pdata->aux_slave_id = PRESSURE_ID_BMP280;
+	else if (!strcmp(name, "icp201xx"))
+		pdata->aux_slave_id = PRESSURE_ID_ICP201XX;
 	else
 		return -EINVAL;
 

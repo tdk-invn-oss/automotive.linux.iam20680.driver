@@ -48,6 +48,11 @@ config INV_MPU_IIO_ICM43600
 	help
 	  Select this if you are using a ICM43600 chip.
 
+config INV_MPU_IIO_ICM45600
+	bool "ICM45600"
+	help
+	  Select this if you are using a ICM45600 chip.
+
 endchoice
 
 config INV_MPU_IIO_I2C
