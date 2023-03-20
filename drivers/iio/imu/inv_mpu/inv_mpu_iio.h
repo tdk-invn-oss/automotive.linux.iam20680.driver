@@ -60,7 +60,7 @@
 #include "icm45600/inv_mpu_iio_reg_45600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"10.0.4"
+#define INVENSENSE_DRIVER_VERSION		"10.0.5"
 
 /* #define DEBUG */
 

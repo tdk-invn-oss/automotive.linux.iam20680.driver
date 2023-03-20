@@ -79,24 +79,22 @@ static int inv_set_accel_bias_reg(struct inv_mpu_state *st,
 	case 0:
 		/* X */
 		addr = REG_XA_OFFS_H;
+		accel_reg_bias = st->org_accel_offset_reg[0];
 		break;
 	case 1:
 		/* Y */
 		addr = REG_YA_OFFS_H;
+		accel_reg_bias = st->org_accel_offset_reg[1];
 		break;
 	case 2:
 		/* Z* */
 		addr = REG_ZA_OFFS_H;
+		accel_reg_bias = st->org_accel_offset_reg[2];
 		break;
 	default:
 		result = -EINVAL;
 		goto accel_bias_set_err;
 	}
-
-	result = inv_plat_read(st, addr, 2, d);
-	if (result)
-		goto accel_bias_set_err;
-	accel_reg_bias = ((int)d[0] << 8) | d[1];
 
 	/* accel_bias is 2g scaled by 1<<16.
 	 * Convert to 16g, and mask bit0
@@ -720,9 +718,9 @@ static ssize_t inv_temperature_show(struct device *dev,
 
 	mutex_lock(&st->lock);
 	res = inv_plat_read(st, REG_RAW_TEMP, 2, data);
+	mutex_unlock(&st->lock);	
 	if (res)
 		return res;
-	mutex_unlock(&st->lock);
 
 	temp = (s16)be16_to_cpup((__be16 *)(data)) * 10000;
 	temp = temp / TEMP_SENSITIVITY + TEMP_OFFSET;

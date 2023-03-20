@@ -204,6 +204,32 @@ static int inv_init_config(struct inv_mpu_state *st)
 	return res;
 }
 
+static int inv_save_offset_regs(struct inv_mpu_state *st)
+{
+	__be16 offset;
+	int accel_offset_regs[3] = {REG_XA_OFFS_H, REG_YA_OFFS_H, REG_ZA_OFFS_H};
+	int gyro_offset_regs[3] = {REG_XG_OFFS_USR_H, REG_YG_OFFS_USR_H, REG_ZG_OFFS_USR_H};
+	int result;
+	int i;
+
+	/* save offset regs initial value */
+	for (i = 0; i < 3; ++i) {
+		/* accel offsets */
+		result = inv_plat_read(st, accel_offset_regs[i], 2, (u8 *)&offset);
+		if (result)
+			return result;
+		st->org_accel_offset_reg[i] = be16_to_cpu(offset);
+
+		/* gyro offsets */
+		result = inv_plat_read(st, gyro_offset_regs[i], 2, (u8 *)&offset);
+		if (result)
+			return result;
+		st->org_gyro_offset_reg[i] = be16_to_cpu(offset);
+	}
+
+	return 0;
+}
+
 int inv_mpu_initialize(struct inv_mpu_state *st)
 {
 	u8 v;
@@ -239,6 +265,11 @@ int inv_mpu_initialize(struct inv_mpu_state *st)
 	result = inv_plat_single_write(st, REG_USER_CTRL, st->i2c_dis);
 	if (result)
 		return result;
+
+	result = inv_save_offset_regs(st);
+	if (result)
+		return result;
+
 	result = inv_init_config(st);
 	if (result)
 		return result;
