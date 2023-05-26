@@ -1,15 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
-* Copyright (C) 2012-2020 InvenSense, Inc.
-*
-* This software is licensed under the terms of the GNU General Public
-* License version 2, as published by the Free Software Foundation, and
-* may be copied, distributed, and modified under those terms.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*/
+ * Copyright (C) 2012-2020 InvenSense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 #define pr_fmt(fmt) "inv_mpu: " fmt
 
 #include <linux/module.h>
@@ -166,6 +167,7 @@ static int _memory_write(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
 #if CONFIG_DYNAMIC_DEBUG_I2C
 	{
 		char *write = 0;
+
 		pr_debug("%s WM%02X%02X%02X%s%s - %d\n", st->hw->name,
 			mpu_addr, bank[1], addr[1],
 			wr_pr_debug_begin(data, len, write),
@@ -265,6 +267,7 @@ static int inv_i2c_mem_read(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
 #if CONFIG_DYNAMIC_DEBUG_I2C
 	{
 		char *read = 0;
+
 		pr_debug("%s RM%02X%02X%02X%02X - %s%s\n", st->hw->name,
 			mpu_addr, bank[1], addr[1], len,
 			wr_pr_debug_begin(data, len, read),
@@ -287,12 +290,12 @@ static int inv_mpu_probe(struct i2c_client *client,
 	int result;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
-		result = -ENOSYS;
+		result = -EIO;
 		pr_err("I2c function error\n");
 		goto out_no_free;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+#if KERNEL_VERSION(5, 9, 0) > LINUX_VERSION_CODE
 	indio_dev = iio_device_alloc(sizeof(*st));
 #else
 	indio_dev = iio_device_alloc(&client->dev, sizeof(*st));
@@ -537,7 +540,7 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	}, {
 		.compatible = "invensense,iim42600",
 		.data = (void *)ICM42600,
-    }, {
+	}, {
 		.compatible = "invensense,icm45600",
 		.data = (void *)ICM45600,
 	},

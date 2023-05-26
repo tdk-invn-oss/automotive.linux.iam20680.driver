@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2017-2020 InvenSense, Inc.
  *
@@ -39,7 +40,7 @@ static const struct inv_hw_s hw_info[INV_NUM_PARTS] = {
 static char debug_reg_addr = 0x6;
 #endif
 
-const char sensor_l_info[][30] = {
+static const char sensor_l_info[][30] = {
 	"SENSOR_L_ACCEL",
 	"SENSOR_L_GYRO",
 	"SENSOR_L_MAG",
@@ -688,7 +689,7 @@ static ssize_t inv_attr_show(struct device *dev,
 	}
 }
 
-static ssize_t inv_self_test(struct device *dev,
+static ssize_t misc_self_test_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
@@ -705,9 +706,9 @@ static ssize_t inv_self_test(struct device *dev,
 
 
 /*
- *  inv_temperature_show() - Read temperature data directly from registers.
+ *  out_temperature_show() - Read temperature data directly from registers.
  */
-static ssize_t inv_temperature_show(struct device *dev,
+static ssize_t out_temperature_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
@@ -718,7 +719,7 @@ static ssize_t inv_temperature_show(struct device *dev,
 
 	mutex_lock(&st->lock);
 	res = inv_plat_read(st, REG_RAW_TEMP, 2, data);
-	mutex_unlock(&st->lock);	
+	mutex_unlock(&st->lock);
 	if (res)
 		return res;
 
@@ -729,9 +730,9 @@ static ssize_t inv_temperature_show(struct device *dev,
 }
 
 /*
- *  inv_reg_dump_show() - Register dump for testing.
+ *  debug_reg_dump_show() - Register dump for testing.
  */
-static ssize_t inv_reg_dump_show(struct device *dev,
+static ssize_t debug_reg_dump_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
 	int ii;
@@ -757,7 +758,7 @@ static ssize_t inv_reg_dump_show(struct device *dev,
 	return bytes_printed;
 }
 
-static ssize_t inv_flush_batch_store(struct device *dev,
+static ssize_t misc_flush_batch_store(struct device *dev,
 			struct device_attribute *attr, const char *buf,
 			size_t count)
 {
@@ -789,137 +790,136 @@ static const struct iio_chan_spec inv_mpu_channels[] = {
 };
 
 /* special run time sysfs entry, read only */
-static DEVICE_ATTR(debug_reg_dump, S_IRUGO | S_IWUSR, inv_reg_dump_show, NULL);
-static DEVICE_ATTR(out_temperature, S_IRUGO | S_IWUSR,
-			inv_temperature_show, NULL);
-static DEVICE_ATTR(misc_self_test, S_IRUGO | S_IWUSR, inv_self_test, NULL);
+static DEVICE_ATTR_RO(debug_reg_dump);
+static DEVICE_ATTR_RO(out_temperature);
+static DEVICE_ATTR_RO(misc_self_test);
 
-static IIO_DEVICE_ATTR(info_anglvel_matrix, S_IRUGO, inv_attr_show, NULL,
+static IIO_DEVICE_ATTR(info_anglvel_matrix, 0444, inv_attr_show, NULL,
 			ATTR_GYRO_MATRIX);
-static IIO_DEVICE_ATTR(info_accel_matrix, S_IRUGO, inv_attr_show, NULL,
+static IIO_DEVICE_ATTR(info_accel_matrix, 0444, inv_attr_show, NULL,
 			ATTR_ACCEL_MATRIX);
 
-static IIO_DEVICE_ATTR(info_gyro_sf, S_IRUGO, inv_attr_show, NULL,
+static IIO_DEVICE_ATTR(info_gyro_sf, 0444, inv_attr_show, NULL,
 			ATTR_GYRO_SF);
 /* write only sysfs */
-static DEVICE_ATTR(misc_flush_batch, S_IWUSR, NULL, inv_flush_batch_store);
+static DEVICE_ATTR_WO(misc_flush_batch);
 
 /* sensor on/off sysfs control */
-static IIO_DEVICE_ATTR(in_accel_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_enable, 0644,
 			inv_sensor_on_show, inv_sensor_on_store, SENSOR_L_ACCEL);
-static IIO_DEVICE_ATTR(in_anglvel_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_enable, 0644,
 			inv_sensor_on_show, inv_sensor_on_store, SENSOR_L_GYRO);
 #ifndef SUPPORT_ONLY_BASIC_FEATURES
-static IIO_DEVICE_ATTR(in_eis_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_eis_enable, 0644,
 			inv_sensor_on_show, inv_sensor_on_store,
 			SENSOR_L_EIS_GYRO);
 #endif
-static IIO_DEVICE_ATTR(in_accel_wake_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_wake_enable, 0644,
 			inv_sensor_on_show, inv_sensor_on_store,
 			SENSOR_L_ACCEL_WAKE);
-static IIO_DEVICE_ATTR(in_anglvel_wake_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_wake_enable, 0644,
 			inv_sensor_on_show, inv_sensor_on_store,
 			SENSOR_L_GYRO_WAKE);
 
 /* sensor rate sysfs control */
-static IIO_DEVICE_ATTR(in_accel_rate, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_rate, 0644,
 			inv_sensor_rate_show, inv_sensor_rate_store,
 			SENSOR_L_ACCEL);
-static IIO_DEVICE_ATTR(in_anglvel_rate, S_IRUGO | S_IWUSR, inv_sensor_rate_show,
+static IIO_DEVICE_ATTR(in_anglvel_rate, 0644, inv_sensor_rate_show,
 			inv_sensor_rate_store, SENSOR_L_GYRO);
 #ifndef SUPPORT_ONLY_BASIC_FEATURES
-static IIO_DEVICE_ATTR(in_eis_rate, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_eis_rate, 0644,
 			inv_sensor_rate_show, inv_sensor_rate_store,
 			SENSOR_L_EIS_GYRO);
 #endif
-static IIO_DEVICE_ATTR(in_accel_wake_rate, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_wake_rate, 0644,
 			inv_sensor_rate_show, inv_sensor_rate_store,
 			SENSOR_L_ACCEL_WAKE);
-static IIO_DEVICE_ATTR(in_anglvel_wake_rate, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_wake_rate, 0644,
 			inv_sensor_rate_show, inv_sensor_rate_store,
 			SENSOR_L_GYRO_WAKE);
 
-static IIO_DEVICE_ATTR(misc_batchmode_timeout, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(misc_batchmode_timeout, 0644,
 			inv_attr_show, inv_basic_attr_store,
 			ATTR_DMP_BATCHMODE_TIMEOUT);
 
 /* engine scale */
-static IIO_DEVICE_ATTR(in_accel_scale, S_IRUGO | S_IWUSR, inv_attr_show,
+static IIO_DEVICE_ATTR(in_accel_scale, 0644, inv_attr_show,
 			inv_misc_attr_store, ATTR_ACCEL_SCALE);
-static IIO_DEVICE_ATTR(in_anglvel_scale, S_IRUGO | S_IWUSR, inv_attr_show,
+static IIO_DEVICE_ATTR(in_anglvel_scale, 0644, inv_attr_show,
 			inv_misc_attr_store, ATTR_GYRO_SCALE);
 
 
 #ifndef SUPPORT_ONLY_BASIC_FEATURES
-static IIO_DEVICE_ATTR(debug_lp_en_off, S_IRUGO | S_IWUSR, inv_attr_show,
+static IIO_DEVICE_ATTR(debug_lp_en_off, 0644, inv_attr_show,
 			inv_debug_store, ATTR_DMP_LP_EN_OFF);
-static IIO_DEVICE_ATTR(debug_clock_sel, S_IRUGO | S_IWUSR, inv_attr_show,
+static IIO_DEVICE_ATTR(debug_clock_sel, 0644, inv_attr_show,
 			inv_debug_store, ATTR_DMP_CLK_SEL);
-static IIO_DEVICE_ATTR(debug_reg_write, S_IRUGO | S_IWUSR, inv_attr_show,
+static IIO_DEVICE_ATTR(debug_reg_write, 0644, inv_attr_show,
 			inv_debug_store, ATTR_DEBUG_REG_WRITE);
-static IIO_DEVICE_ATTR(debug_reg_write_addr, S_IRUGO | S_IWUSR, inv_attr_show,
+static IIO_DEVICE_ATTR(debug_reg_write_addr, 0644, inv_attr_show,
 			inv_debug_store, ATTR_DEBUG_REG_ADDR);
 #endif
 
-static IIO_DEVICE_ATTR(in_accel_x_st_calibbias, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_x_st_calibbias, 0644,
 			inv_attr_show, NULL, ATTR_ACCEL_X_ST_CALIBBIAS);
-static IIO_DEVICE_ATTR(in_accel_y_st_calibbias, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_y_st_calibbias, 0644,
 			inv_attr_show, NULL, ATTR_ACCEL_Y_ST_CALIBBIAS);
-static IIO_DEVICE_ATTR(in_accel_z_st_calibbias, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_z_st_calibbias, 0644,
 			inv_attr_show, NULL, ATTR_ACCEL_Z_ST_CALIBBIAS);
 
-static IIO_DEVICE_ATTR(in_anglvel_x_st_calibbias, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_x_st_calibbias, 0644,
 			inv_attr_show, NULL, ATTR_ANGLVEL_X_ST_CALIBBIAS);
-static IIO_DEVICE_ATTR(in_anglvel_y_st_calibbias, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_y_st_calibbias, 0644,
 			inv_attr_show, NULL, ATTR_ANGLVEL_Y_ST_CALIBBIAS);
-static IIO_DEVICE_ATTR(in_anglvel_z_st_calibbias, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_z_st_calibbias, 0644,
 			inv_attr_show, NULL, ATTR_ANGLVEL_Z_ST_CALIBBIAS);
 
-static IIO_DEVICE_ATTR(in_accel_x_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_x_offset, 0644,
 			inv_attr_show, inv_bias_store, ATTR_ACCEL_X_OFFSET);
-static IIO_DEVICE_ATTR(in_accel_y_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_y_offset, 0644,
 			inv_attr_show, inv_bias_store, ATTR_ACCEL_Y_OFFSET);
-static IIO_DEVICE_ATTR(in_accel_z_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_accel_z_offset, 0644,
 			inv_attr_show, inv_bias_store, ATTR_ACCEL_Z_OFFSET);
 
-static IIO_DEVICE_ATTR(in_anglvel_x_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_x_offset, 0644,
 			inv_attr_show, inv_bias_store, ATTR_GYRO_X_OFFSET);
-static IIO_DEVICE_ATTR(in_anglvel_y_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_y_offset, 0644,
 			inv_attr_show, inv_bias_store, ATTR_GYRO_Y_OFFSET);
-static IIO_DEVICE_ATTR(in_anglvel_z_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_anglvel_z_offset, 0644,
 			inv_attr_show, inv_bias_store, ATTR_GYRO_Z_OFFSET);
 
-static IIO_DEVICE_ATTR(info_gyro_lp_mode, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(info_gyro_lp_mode, 0644,
 			inv_attr_show, NULL, ATTR_GYRO_LP_MODE);
-static IIO_DEVICE_ATTR(info_accel_lp_mode, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(info_accel_lp_mode, 0644,
 			inv_attr_show, NULL, ATTR_ACCEL_LP_MODE);
 
 #ifndef SUPPORT_ONLY_BASIC_FEATURES
-static IIO_DEVICE_ATTR(in_step_detector_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_step_detector_enable, 0644,
 			inv_attr_show, inv_basic_attr_store,
 			ATTR_DMP_STEP_DETECTOR_ON);
-static IIO_DEVICE_ATTR(in_step_detector_wake_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_step_detector_wake_enable, 0644,
 			inv_attr_show, inv_basic_attr_store,
 			ATTR_DMP_STEP_DETECTOR_WAKE_ON);
-static IIO_DEVICE_ATTR(in_step_counter_enable, S_IRUGO | S_IWUSR, inv_attr_show,
+static IIO_DEVICE_ATTR(in_step_counter_enable, 0644, inv_attr_show,
 			inv_basic_attr_store, ATTR_DMP_STEP_COUNTER_ON);
-static IIO_DEVICE_ATTR(in_step_counter_wake_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_step_counter_wake_enable, 0644,
 			inv_attr_show, inv_basic_attr_store,
 			ATTR_DMP_STEP_COUNTER_WAKE_ON);
 
-static IIO_DEVICE_ATTR(event_tilt_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(event_tilt_enable, 0644,
 			inv_attr_show, inv_basic_attr_store,
 			ATTR_DMP_TILT_ENABLE);
 
-static IIO_DEVICE_ATTR(event_eis_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(event_eis_enable, 0644,
 			inv_attr_show, inv_basic_attr_store,
 			ATTR_DMP_EIS_ENABLE);
 
-static IIO_DEVICE_ATTR(event_pick_up_enable, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(event_pick_up_enable, 0644,
 			inv_attr_show, inv_basic_attr_store,
 			ATTR_DMP_PICK_UP_ENABLE);
 
-static IIO_DEVICE_ATTR(in_power_on, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_power_on, 0644,
 			inv_attr_show, inv_basic_attr_store,
 			ATTR_IN_POWER_ON);
 #endif
@@ -1012,7 +1012,7 @@ static const struct attribute_group inv_attribute_group = {
 };
 
 static const struct iio_info mpu_info = {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)
+#if KERNEL_VERSION(4, 15, 0) > LINUX_VERSION_CODE
 	.driver_module = THIS_MODULE,
 #endif
 	.attrs = &inv_attribute_group,

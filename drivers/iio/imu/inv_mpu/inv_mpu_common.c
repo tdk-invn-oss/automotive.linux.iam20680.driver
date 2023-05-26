@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2012-2021 InvenSense, Inc.
  *
@@ -38,12 +39,13 @@ s64 get_time_ns(void)
 #else
 s64 get_time_ns(void)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+#if KERNEL_VERSION(4, 19, 0) > LINUX_VERSION_CODE
 	/* kernel ~4.18 */
 	struct timespec ts;
+
 	get_monotonic_boottime(&ts);
 	return timespec_to_ns(&ts);
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 3, 0)
+#elif KERNEL_VERSION(5, 3, 0) > LINUX_VERSION_CODE
 	/* kernel 4.19~5.2 */
 	return ktime_get_boot_ns();
 #else
@@ -975,7 +977,7 @@ int inv_check_sensor_on(struct inv_mpu_state *st)
 				 || st->chip_config.pick_up_enable
 				 || st->chip_config.tilt_enable))
 			|| st->chip_config.stationary_detect_enable
-			||st->chip_config.motion_detect_enable)
+			|| st->chip_config.motion_detect_enable)
 		st->sensor_l[SENSOR_L_GESTURE_ACCEL].on = true;
 	else
 		st->sensor_l[SENSOR_L_GESTURE_ACCEL].on = false;
@@ -1207,7 +1209,8 @@ int inv_check_sensor_on(struct inv_mpu_state *st)
 #endif /* SUPPORT_ACCEL_LPM */
 
 	/* set GESTURE_ACCEL on to support gestures at HAL
-	 * if Apex is supported inside sensor, gesture accel is false*/
+	 * if Apex is supported inside sensor, gesture accel is false
+	 */
 	if (st->apex_supported)
 		st->sensor_l[SENSOR_L_GESTURE_ACCEL].on = false;
 	else

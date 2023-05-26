@@ -10,48 +10,85 @@ config INV_MPU_IIO
 choice
 	prompt "Chip name"
 	depends on INV_MPU_IIO
+	help
+	  Select TDK Invensense chip.
+	  INV_MPU_IIO_ICM20648, INV_MPU_IIO_ICM20608D, INV_MPU_IIO_ICM20602
+	  INV_MPU_IIO_ICM20690, INV_MPU_IIO_IAM20680, INV_MPU_IIO_ICM42600
+	  INV_MPU_IIO_ICM43600, INV_MPU_IIO_ICM45600
 
 config INV_MPU_IIO_ICM20648
 	bool "ICM20648/ICM20948"
 	select CRC32
 	help
-	  Select this if you are using a ICM20648/ICM20948 chip.
+	  Select here if you want to build a driver for the ICM20648/ICM20948
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
 
 config INV_MPU_IIO_ICM20608D
 	bool "ICM20608D/ICM206x9/ICM20789"
 	select CRC32
 	help
-	  Select this if you are using a ICM20608D/ICM206x9/ICM20789 chip.
+	  Select here if you want to build a driver for the ICM20608D/ICM206x9/ICM20789
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
 
 config INV_MPU_IIO_ICM20602
 	bool "ICM20602"
 	help
-	  Select this if you are using a ICM20602 chip.
+	  Select here if you want to build a driver for the ICM20602
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
 
 config INV_MPU_IIO_ICM20690
 	bool "ICM20690"
 	help
-	  Select this if you are using a ICM20690 chip.
+	  Select here if you want to build a driver for the ICM20690
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
 
 config INV_MPU_IIO_IAM20680
 	bool "IAM20680"
 	help
-	  Select this if you are using a IAM20680 chip.
+	  Select here if you want to build a driver for the IAM20680
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
 
 config INV_MPU_IIO_ICM42600
 	bool "ICM42600"
 	help
-	  Select this if you are using a ICM426xx/ICM40607/ICM40609D/IIM42600 chip.
+	  Select here if you want to build a driver for the ICM42600
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
 
 config INV_MPU_IIO_ICM43600
 	bool "ICM43600"
 	help
-	  Select this if you are using a ICM43600 chip.
+	  Select here if you want to build a driver for the ICM43600
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
 
 config INV_MPU_IIO_ICM45600
 	bool "ICM45600"
 	help
-	  Select this if you are using a ICM45600 chip.
+	  Select here if you want to build a driver for the ICM45600
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
 
 endchoice
 
@@ -61,7 +98,8 @@ config INV_MPU_IIO_I2C
 	select INV_MPU_IIO
 	help
 	  This driver supports Invensense ICM20xxx devices over I2C.
-	  This driver can be built as a module. The module will be called
+	  This driver can be built as a module.
+	  The module will be called
 	  inv-mpu-iio-i2c.
 
 config INV_MPU_IIO_SPI
@@ -70,6 +108,7 @@ config INV_MPU_IIO_SPI
 	select INV_MPU_IIO
 	help
 	  This driver supports Invensense ICM20xxx devices over SPI.
-	  This driver can be built as a module. The module will be called
+	  This driver can be built as a module.
+	  The module will be called
 	  inv-mpu-iio-spi.
 

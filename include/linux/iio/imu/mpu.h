@@ -1,15 +1,16 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
-* Copyright (C) 2012-2017 InvenSense, Inc.
-*
-* This software is licensed under the terms of the GNU General Public
-* License version 2, as published by the Free Software Foundation, and
-* may be copied, distributed, and modified under those terms.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*/
+ * Copyright (C) 2012-2017 InvenSense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #ifndef __MPU_H_
 #define __MPU_H_
@@ -116,8 +117,8 @@ struct mpu_platform_data {
 	enum ext_slave_id read_only_slave_id;
 	__u16 read_only_i2c_addr;
 #ifdef CONFIG_OF
-	int (*power_on)(struct mpu_platform_data *);
-	int (*power_off)(struct mpu_platform_data *);
+	int (*power_on)(struct mpu_platform_data *data);
+	int (*power_off)(struct mpu_platform_data *data);
 	struct regulator *vdd_ana;
 	struct regulator *vdd_i2c;
 #endif

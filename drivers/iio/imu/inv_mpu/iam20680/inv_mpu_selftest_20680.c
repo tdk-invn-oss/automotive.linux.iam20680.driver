@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2017-2020 InvenSense, Inc.
  *
@@ -251,7 +252,7 @@ static int inv_recover_setting(struct inv_mpu_state *st)
 	return result;
 }
 
-int inv_switch_engine(struct inv_mpu_state *st, bool en, u32 mask)
+static int inv_switch_engine(struct inv_mpu_state *st, bool en, u32 mask)
 {
 	u8 data, mgmt_1;
 	int result;
@@ -296,22 +297,6 @@ int inv_switch_engine(struct inv_mpu_state *st, bool en, u32 mask)
 	return 0;
 }
 
-int inv_set_offset_reg(struct inv_mpu_state *st, int reg, int val)
-{
-	int result;
-	u8 d;
-
-	d = ((val >> 8) & 0xff);
-	result = inv_plat_single_write(st, reg, d);
-	if (result)
-		return result;
-
-	d = (val & 0xff);
-	result = inv_plat_single_write(st, reg + 1, d);
-
-	return result;
-}
-
 /**
  * inv_check_gyro_self_test() - check gyro self test. this function
  *                                   returns zero as success. A non-zero return
@@ -320,7 +305,7 @@ int inv_set_offset_reg(struct inv_mpu_state *st, int reg, int val)
  *  @*reg_avg: average value of normal test.
  *  @*st_avg:  average value of self test
  */
-int inv_check_gyro_self_test(struct inv_mpu_state *st,
+static int inv_check_gyro_self_test(struct inv_mpu_state *st,
 						int *reg_avg, int *st_avg)
 {
 	u8 regs[3];
@@ -386,7 +371,7 @@ int inv_check_gyro_self_test(struct inv_mpu_state *st,
  *  @*reg_avg: average value of normal test.
  *  @*st_avg:  average value of self test
  */
-int inv_check_accel_self_test(struct inv_mpu_state *st,
+static int inv_check_accel_self_test(struct inv_mpu_state *st,
 						int *reg_avg, int *st_avg)
 {
 	int ret_val, result;
@@ -437,7 +422,7 @@ int inv_check_accel_self_test(struct inv_mpu_state *st,
 /*
  *  inv_do_test() - do the actual test of self testing
  */
-int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
+static int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
 		int *gyro_result, int *accel_result, int lp_mode)
 {
 	int result, i, j, packet_size;
@@ -613,7 +598,7 @@ int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
 }
 
 
-int inv_power_up_self_test(struct inv_mpu_state *st)
+static int inv_power_up_self_test(struct inv_mpu_state *st)
 {
 	int result;
 
@@ -644,7 +629,7 @@ int inv_hw_self_test(struct inv_mpu_state *st)
 	int result;
 	int gyro_bias_st[THREE_AXIS], gyro_bias_regular[THREE_AXIS];
 	int accel_bias_st[THREE_AXIS], accel_bias_regular[THREE_AXIS];
-#if 0
+#ifdef ENABLE_GYRO_HW_SELFTEST
 	int gyro_bias_regular_lp[THREE_AXIS];
 	int accel_bias_regular_lp[THREE_AXIS];
 	int dummy_bias_regular[THREE_AXIS];
@@ -697,7 +682,7 @@ int inv_hw_self_test(struct inv_mpu_state *st)
 		st->hw->name, gyro_bias_st[0], gyro_bias_st[1],
 		gyro_bias_st[2]);
 
-#if 0
+#ifdef ENABLE_GYRO_HW_SELFTEST
 	/* lp gyro mode */
 	test_times = DEF_ST_TRY_TIMES;
 	while (test_times > 0) {

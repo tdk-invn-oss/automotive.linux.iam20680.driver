@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2012-2021 InvenSense, Inc.
  *
@@ -129,7 +130,7 @@ static int inv_do_interpolation_gyro(struct iio_dev *indio_dev, int *prev,
 	curr_t -= st->ts_algo.gyro_ts_shift;
 	curr_t += MPU_4X_TS_GYRO_SHIFT;
 #endif
-	if ((t > prev_t) && (t < curr_t)) {
+	if ((t > prev_t)&&(t < curr_t)) {
 		for (i = 0; i < 3; i++)
 			out[i] = (int)div_s64((s64)(curr[i] - prev[i]) *
 				(s64)(t - prev_t), curr_t - prev_t) + prev[i];
@@ -279,7 +280,8 @@ void inv_convert_and_push_16bytes(struct iio_dev *indio_dev, u16 hdr,
 							u8 *d, u64 t, s8 *m)
 {
 	int i, j;
-	s32 in[3], out[3];
+	s32 in[3];
+	s32 out[3] = {0, 0, 0};
 
 	for (i = 0; i < 3; i++)
 		in[i] = be32_to_int(d + i * 4);
@@ -296,7 +298,8 @@ void inv_convert_and_push_8bytes(struct iio_dev *indio_dev, u16 hdr,
 				 u8 *d, u64 t, s8 *m)
 {
 	int i, j;
-	s16 in[3], out[3];
+	s16 in[3];
+	s16 out[3] = {0, 0, 0};
 
 	for (i = 0; i < 3; i++)
 		in[i] = be16_to_cpup((__be16 *) (d + i * 2));
@@ -575,11 +578,11 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 	}
 
 	st->trig = iio_trigger_alloc(
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0)
+#if KERNEL_VERSION(5, 13, 0) <= LINUX_VERSION_CODE
 				     st->dev,
 #endif
 				    "%s-dev%d", indio_dev->name,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
+#if KERNEL_VERSION(5, 14, 0) > LINUX_VERSION_CODE
 				     indio_dev->id);
 #else
 				     iio_device_id(indio_dev));

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2012-2021 InvenSense, Inc.
  *
@@ -56,10 +57,12 @@ int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 	/* we average over 2 seconds period to do the timestamp calculation */
 	if (ts < cal_period)
 		return 0;
-	/* this is the first time we do timestamp averaging, return */
-	/* after resume from suspend, the clock of linux has up to 1 seconds
-	   drift. We should start from the resume clock instead of using clock
-	   before resume */
+
+	/* this is the first time we do timestamp averaging, return
+	 * after resume from suspend, the clock of linux has up to 1 seconds
+	 * drift. We should start from the resume clock instead of using clock
+	 * before resume
+	 */
 	if ((!st->sensor[ind].calib_flag) || ts_algo->resume_flag) {
 		st->sensor[ind].sample_calib = 0;
 		st->sensor[ind].time_calib = ts_algo->last_run_time;
@@ -69,7 +72,8 @@ int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 		return 0;
 	}
 	/* if the sample number in current FIFO is not zero and between now and
-		last update time is more than 2 seconds, we do calculation */
+	 * last update time is more than 2 seconds, we do calculation
+	 */
 	if ((counter > 0) &&
 		(ts_algo->last_run_time - st->eng_info[en_ind].last_update_time >
 		 cal_period)) {
@@ -127,7 +131,7 @@ int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
  *     This function will update the last_run_time, which is important parameter
  *     in overall timestamp algorithm.
  *     return value: this function returns fifo count value.
-*/
+ */
 int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st)
 {
 	long long t_pre, t_post, dur;
@@ -160,15 +164,15 @@ int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st)
 		return 0;
 
 	/* In non DMP mode, either gyro or accel duration is the duration
-		for each sample */
+	 * for each sample
+	 */
 	if (st->chip_config.gyro_enable)
 		dur = st->eng_info[ENGINE_GYRO].dur;
 	else
 		dur = st->eng_info[ENGINE_ACCEL].dur;
 
-	if (st->fifo_count_mode == BYTE_MODE) {
+	if (st->fifo_count_mode == BYTE_MODE)
 		fifo_count /= st->batch.pk_size;
-	}
 
 	/* In record mode, each number in fifo_count is 1 record or 1 sample */
 	st->ts_algo.last_run_time += dur * fifo_count;
@@ -252,7 +256,7 @@ static void process_sensor_bounding(struct inv_mpu_state *st, int i)
 	elaps_time = ((u64) (st->sensor[i].dur)) * st->sensor[i].count;
 	thresh1 = ts_algo->last_run_time - elaps_time;
 
-	dur = max(st->sensor[i].dur, (int)MIN_DELAY);
+	dur = max_t(int, st->sensor[i].dur, MIN_DELAY);
 	thresh2 = thresh1 - dur;
 	if (thresh1 < 0)
 		thresh1 = 0;
@@ -284,12 +288,14 @@ static void process_sensor_bounding(struct inv_mpu_state *st, int i)
 		st->sensor[i].ts_adj = div_s64(st->sensor[i].ts_adj,
 							st->sensor[i].count);
 }
+
 /* inv_bound_timestamp (struct inv_mpu_state *st)
-	The purpose this function is to give a generic bound to each
-	sensor timestamp. The timestamp cannot exceed current time.
-	The timestamp cannot backwards one sample time either, otherwise, there
-	would be another sample in between. Using this principle, we can bound
-	the sensor samples */
+ * The purpose this function is to give a generic bound to each
+ * sensor timestamp. The timestamp cannot exceed current time.
+ * The timestamp cannot backwards one sample time either, otherwise, there
+ * would be another sample in between. Using this principle, we can bound
+ * the sensor samples
+ */
 int inv_bound_timestamp(struct inv_mpu_state *st)
 {
 	int i;

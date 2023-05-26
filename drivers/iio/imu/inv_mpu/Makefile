@@ -71,7 +71,6 @@ inv-mpu-iio-objs += icm45600/inv_mpu_parsing_45600.o
 inv-mpu-iio-objs += icm45600/inv_mpu_setup_45600.o
 inv-mpu-iio-objs += icm45600/inv_mpu_misc_45600.o
 inv-mpu-iio-objs += icm45600/inv_mpu_selftest_45600.o
-inv-mpu-iio-objs += icm45600/inv_mpu_selfcal_45600.o
 inv-mpu-iio-objs += icm45600/inv_slave_compass.o
 inv-mpu-iio-objs += icm45600/inv_slave_pressure.o
 endif

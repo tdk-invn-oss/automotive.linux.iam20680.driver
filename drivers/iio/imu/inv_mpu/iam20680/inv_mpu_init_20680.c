@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2017-2020 InvenSense, Inc.
  *
@@ -170,7 +171,7 @@ static int inv_init_config(struct inv_mpu_state *st)
 	st->ped.step_thresh = MPU_INIT_PED_STEP_THRESH;
 	st->chip_config.low_power_gyro_on = 1;
 	st->eis.count_precision = NSEC_PER_MSEC;
-	st->firmware = 0;
+	st->firmware = NULL;
 	st->fifo_count_mode = BYTE_MODE;
 #ifdef TIMER_BASED_BATCHING
 	st->batch_timeout = 0;

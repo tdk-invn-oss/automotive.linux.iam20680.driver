@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2012-2020 InvenSense, Inc.
  *
@@ -60,7 +61,7 @@
 #include "icm45600/inv_mpu_iio_reg_45600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"10.0.5"
+#define INVENSENSE_DRIVER_VERSION		"10.0.7"
 
 /* #define DEBUG */
 
@@ -925,17 +926,17 @@ struct inv_mpu_slave {
 	int scale;
 	int rate_scale;
 	int min_read_time;
-	int (*self_test)(struct inv_mpu_state *);
-	int (*set_scale)(struct inv_mpu_state *, int scale);
-	int (*get_scale)(struct inv_mpu_state *, int *val);
-	int (*suspend)(struct inv_mpu_state *);
-	int (*resume)(struct inv_mpu_state *);
-	int (*setup)(struct inv_mpu_state *);
+	int (*self_test)(struct inv_mpu_state *state);
+	int (*set_scale)(struct inv_mpu_state *state, int scale);
+	int (*get_scale)(struct inv_mpu_state *state, int *val);
+	int (*suspend)(struct inv_mpu_state *state);
+	int (*resume)(struct inv_mpu_state *state);
+	int (*setup)(struct inv_mpu_state *state);
 	int (*combine_data)(u8 *in, short *out);
-	int (*read_data)(struct inv_mpu_state *, short *out);
+	int (*read_data)(struct inv_mpu_state *state, short *out);
 	int (*get_mode)(void);
-	int (*set_lpf)(struct inv_mpu_state *, int rate);
-	int (*set_fs)(struct inv_mpu_state *, int fs);
+	int (*set_lpf)(struct inv_mpu_state *state, int rate);
+	int (*set_fs)(struct inv_mpu_state *state, int fs);
 	u64 prev_ts;
 };
 

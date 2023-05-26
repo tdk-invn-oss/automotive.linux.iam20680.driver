@@ -1,15 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
-* Copyright (C) 2012-2020 InvenSense, Inc.
-*
-* This software is licensed under the terms of the GNU General Public
-* License version 2, as published by the Free Software Foundation, and
-* may be copied, distributed, and modified under those terms.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*/
+ * Copyright (C) 2012-2020 InvenSense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 #define pr_fmt(fmt) "inv_mpu: " fmt
 
 #include <linux/module.h>
@@ -71,7 +72,7 @@ static int inv_spi_read(struct inv_mpu_state *st, u8 reg, int len, u8 *data)
 		 .rx_buf = data,
 		 .bits_per_word = 8,
 		 .len = len,
-		 }
+		}
 	};
 
 	if (!data)
@@ -84,7 +85,7 @@ static int inv_spi_read(struct inv_mpu_state *st, u8 reg, int len, u8 *data)
 	spi_message_add_tail(&xfers[1], &msg);
 	res = spi_sync(to_spi_device(st->dev), &msg);
 
-	if (len ==1)
+	if (len == 1)
 		pr_debug("reg_read: reg=0x%x length=%d data=0x%x\n",
 							reg, len, data[0]);
 	else
@@ -157,7 +158,7 @@ static int inv_mpu_probe(struct spi_device *spi)
 	struct iio_dev *indio_dev;
 	int result;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+#if KERNEL_VERSION(5, 9, 0) > LINUX_VERSION_CODE
 	indio_dev = iio_device_alloc(sizeof(*st));
 #else
 	indio_dev = iio_device_alloc(&spi->dev, sizeof(*st));
@@ -253,7 +254,7 @@ static int inv_mpu_probe(struct spi_device *spi)
 		pr_info("failed to create wakeup_source\n");
 #endif
 	dev_info(st->dev, "%s ma-kernel-%s is ready to go!\n",
-	         indio_dev->name, INVENSENSE_DRIVER_VERSION);
+		indio_dev->name, INVENSENSE_DRIVER_VERSION);
 
 #ifdef SENSOR_DATA_FROM_REGISTERS
 	pr_info("Data read from registers\n");
@@ -400,7 +401,7 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	}, {
 		.compatible = "invensense,iim42600",
 		.data = (void *)ICM42600,
-	},{
+	}, {
 		.compatible = "invensense,icm45600",
 		.data = (void *)ICM45600,
 	},
