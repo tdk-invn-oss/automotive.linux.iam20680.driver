@@ -29,6 +29,7 @@
 #include <linux/version.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/buffer.h>
+#include <linux/iio/kfifo_buf.h>
 #include <linux/iio/trigger.h>
 #include <linux/iio/triggered_buffer.h>
 
@@ -563,6 +564,9 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 {
 	int ret;
 	struct inv_mpu_state *st = iio_priv(indio_dev);
+#if KERNEL_VERSION(5, 13, 0) <= LINUX_VERSION_CODE
+	struct iio_buffer *buffer;
+#endif
 
 #ifdef TIMER_BASED_BATCHING
 	/* configure hrtimer */
@@ -577,6 +581,18 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 		return ret;
 	}
 
+#if KERNEL_VERSION(5, 13, 0) <= LINUX_VERSION_CODE
+	/* allocate 2nd buffer for concurrent access */
+	buffer = iio_kfifo_allocate();
+	if (!buffer) {
+		ret = -ENOMEM;
+		goto error_free_buffer;
+	}
+	ret = iio_device_attach_buffer(indio_dev, buffer);
+	if (ret < 0)
+		goto error_free_buffer2;
+#endif
+
 	st->trig = iio_trigger_alloc(
 #if KERNEL_VERSION(5, 13, 0) <= LINUX_VERSION_CODE
 				     st->dev,
@@ -590,7 +606,7 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 	if (st->trig == NULL) {
 		ret = -ENOMEM;
 		dev_err(st->dev, "iio trigger alloc error\n");
-		goto error_free_buffer;
+		goto error_free_buffer2;
 	}
 	st->trig->dev.parent = st->dev;
 	st->trig->ops = &inv_mpu_trigger_ops;
@@ -617,6 +633,10 @@ error_free_irq:
 	free_irq(st->irq, st->trig);
 error_free_trigger:
 	iio_trigger_free(st->trig);
+error_free_buffer2:
+#if KERNEL_VERSION(5, 13, 0) <= LINUX_VERSION_CODE
+	iio_kfifo_free(buffer);
+#endif
 error_free_buffer:
 	iio_triggered_buffer_cleanup(indio_dev);
 	return ret;
