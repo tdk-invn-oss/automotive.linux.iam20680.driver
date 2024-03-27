@@ -1077,7 +1077,6 @@ int inv_check_chip_type(struct iio_dev *indio_dev, const char *name)
 
 	indio_dev->info = &mpu_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
-	indio_dev->currentmode = INDIO_DIRECT_MODE;
 
 	return result;
 }

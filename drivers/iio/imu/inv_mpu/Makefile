@@ -75,6 +75,11 @@ inv-mpu-iio-objs += icm45600/inv_slave_compass.o
 inv-mpu-iio-objs += icm45600/inv_slave_pressure.o
 endif
 
+# IPL support
+ifeq ($(CONFIG_INV_MPU_IIO_IPL), y)
+ccflags-y += -DINV_IPL=1
+endif
+
 # Bus support
 obj-$(CONFIG_INV_MPU_IIO_I2C) += inv-mpu-iio-i2c.o
 inv-mpu-iio-i2c-objs := inv_mpu_i2c.o

@@ -306,6 +306,7 @@ static int inv_mpu_probe(struct i2c_client *client,
 		goto out_no_free;
 	}
 
+	iio_device_set_drvdata(indio_dev, indio_dev);
 	st = iio_priv(indio_dev);
 	mutex_init(&st->lock);
 	st->client = client;
@@ -434,7 +435,11 @@ static void inv_mpu_shutdown(struct i2c_client *client)
 /*
  *  inv_mpu_remove() - remove function.
  */
+#if KERNEL_VERSION(5, 18, 0) <= LINUX_VERSION_CODE
+static void inv_mpu_remove(struct i2c_client *client)
+#else
 static int inv_mpu_remove(struct i2c_client *client)
+#endif
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct inv_mpu_state *st = iio_priv(indio_dev);
@@ -450,7 +455,9 @@ static int inv_mpu_remove(struct i2c_client *client)
 	iio_device_free(indio_dev);
 	dev_info(st->dev, "inv-mpu-iio module removed.\n");
 
+#if KERNEL_VERSION(5, 18, 0) > LINUX_VERSION_CODE
 	return 0;
+#endif
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -484,6 +491,7 @@ static const struct i2c_device_id inv_mpu_id[] = {
 	{"icm20648", ICM20648},
 #else
 	{"icm20608d", ICM20608D},
+	{"icm20609i", ICM20609I},
 	{"icm20789", ICM20789},
 	{"icm20690", ICM20690},
 	{"icm20602", ICM20602},
@@ -495,6 +503,7 @@ static const struct i2c_device_id inv_mpu_id[] = {
 	{"icm43600", ICM43600},
 	{"iim42600", ICM42600},
 	{"icm45600", ICM45600},
+	{"iim42653", ICM42686},
 #endif
 	{}
 };
@@ -510,6 +519,9 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	{
 		.compatible = "invensense,icm20608d",
 		.data = (void *)ICM20608D,
+	}, {
+		.compatible = "invensense,icm20609i",
+		.data = (void *)ICM20609I,
 	}, {
 		.compatible = "invensense,icm20789",
 		.data = (void *)ICM20789,
@@ -540,6 +552,9 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	}, {
 		.compatible = "invensense,iim42600",
 		.data = (void *)ICM42600,
+	}, {
+		.compatible = "invensense,iim42653",
+		.data = (void *)ICM42686,
 	}, {
 		.compatible = "invensense,icm45600",
 		.data = (void *)ICM45600,

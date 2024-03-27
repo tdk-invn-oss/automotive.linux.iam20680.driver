@@ -34,7 +34,7 @@
 #define MIN_DELAY (1 * NSEC_PER_MSEC)
 #define JITTER_THRESH (1 * NSEC_PER_MSEC)
 
-int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
+static int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 {
 	int i;
 	u32 counter;
@@ -52,10 +52,8 @@ int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 	ts = ts_algo->last_run_time - st->sensor[ind].time_calib;
 	counter = st->sensor[ind].sample_calib;
 	en_ind = st->sensor[ind].engine_base;
-	if (en_ind != ts_algo->clock_base)
-		return 0;
 	/* we average over 2 seconds period to do the timestamp calculation */
-	if (ts < cal_period)
+	if ((ts < cal_period) || (counter == 0))
 		return 0;
 
 	/* this is the first time we do timestamp averaging, return
@@ -74,54 +72,47 @@ int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 	/* if the sample number in current FIFO is not zero and between now and
 	 * last update time is more than 2 seconds, we do calculation
 	 */
-	if ((counter > 0) &&
-		(ts_algo->last_run_time - st->eng_info[en_ind].last_update_time >
-		 cal_period)) {
-		/* duration for each sensor */
-		st->sensor[ind].dur = (u32) div_u64(ts, counter);
-		/* engine duration derived from each sensor */
-		if (st->sensor[ind].div)
-			st->eng_info[en_ind].dur = st->sensor[ind].dur /
-							st->sensor[ind].div;
+	/* duration for each sensor */
+	st->sensor[ind].dur = (u32) div_u64(ts, counter);
+	/* engine duration derived from each sensor */
+	if (st->sensor[ind].div)
+		st->eng_info[en_ind].dur = st->sensor[ind].dur /
+						st->sensor[ind].div;
+	else
+		pr_err("sensor %d divider zero!\n", ind);
+	/* update base time for each sensor */
+	if (st->eng_info[en_ind].divider) {
+		base_time = (st->eng_info[en_ind].dur /
+				st->eng_info[en_ind].divider) *
+				st->eng_info[en_ind].orig_rate;
+		if (st->mode_1k_on)
+			st->eng_info[en_ind].base_time_1k = base_time;
 		else
-			pr_err("sensor %d divider zero!\n", ind);
-		/* update base time for each sensor */
-		if (st->eng_info[en_ind].divider) {
-			base_time = (st->eng_info[en_ind].dur /
-					st->eng_info[en_ind].divider) *
-					st->eng_info[en_ind].orig_rate;
-			if (st->mode_1k_on)
-				st->eng_info[en_ind].base_time_1k = base_time;
-			else
-				st->eng_info[en_ind].base_time = base_time;
-		} else {
-			pr_err("engine %d divider zero!\n", en_ind);
-		}
-
-		st->eng_info[en_ind].last_update_time = ts_algo->last_run_time;
-#if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
-		defined(CONFIG_INV_MPU_IIO_ICM20608D) || \
-		defined(CONFIG_INV_MPU_IIO_ICM42600) || \
-		defined(CONFIG_INV_MPU_IIO_ICM43600)
-		/* update all the sensors duration based on the same engine */
-		for (i = 0; i < SENSOR_NUM_MAX; i++) {
-			if (st->sensor[i].on &&
-			    (st->sensor[i].engine_base == en_ind))
-				st->sensor[i].dur = st->sensor[i].div *
-				    st->eng_info[en_ind].dur;
-		}
-#else
-		/* update all the sensors duration. There is a single engine */
-		for (i = 0; i < SENSOR_NUM_MAX; i++) {
-			if (st->sensor[i].on)
-				st->sensor[i].dur = st->sensor[i].div *
-					st->eng_info[en_ind].dur;
-		}
-#endif
-
+			st->eng_info[en_ind].base_time = base_time;
+	} else {
+		base_time = NSEC_PER_SEC;
+		pr_err("engine %d divider zero!\n", en_ind);
 	}
+	/* The whole sensor's clock is derived from one clock per run,
+	 * we need to know the exact speed of this clock compared with host.
+	 * Then we update all the engines and all the sensors duration
+	 */
+	for (i = 0; i < SENSOR_NUM_MAX; i++) {
+		if (st->sensor[i].on) {
+			en_ind = st->sensor[i].engine_base;
+			st->eng_info[en_ind].dur = base_time /
+					st->eng_info[en_ind].orig_rate;
+			st->eng_info[en_ind].dur *= st->eng_info[en_ind].divider;
+			st->sensor[i].dur = st->sensor[i].div *
+			    st->eng_info[en_ind].dur;
+			pr_debug("update dur = %d, %d\n", i, st->sensor[i].dur);
+		}
+	}
+
 	st->sensor[ind].sample_calib = 0;
 	st->sensor[ind].time_calib = ts_algo->last_run_time;
+	pr_debug("dur=%d, ind=%d, eng_dur=%d\n", st->sensor[ind].dur, ind,
+		st->eng_info[en_ind].dur);
 
 	return 0;
 }
@@ -134,14 +125,13 @@ int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
  */
 int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st)
 {
-	long long t_pre, t_post, dur;
 	int fifo_count;
 #ifndef SENSOR_DATA_FROM_REGISTERS
 	int res;
 	u8 data[2];
 #endif
 
-	t_pre = get_time_ns();
+	st->ts_algo.last_run_time = get_time_ns();
 #ifndef SENSOR_DATA_FROM_REGISTERS
 	res = inv_plat_read(st, REG_FIFO_COUNT_H, FIFO_COUNT_BYTE, data);
 	if (res) {
@@ -149,7 +139,6 @@ int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st)
 		return 0;
 	}
 #endif
-	t_post = get_time_ns();
 
 #ifdef SENSOR_DATA_FROM_REGISTERS
 	if (st->fifo_count_mode == BYTE_MODE)
@@ -166,20 +155,9 @@ int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st)
 	/* In non DMP mode, either gyro or accel duration is the duration
 	 * for each sample
 	 */
-	if (st->chip_config.gyro_enable)
-		dur = st->eng_info[ENGINE_GYRO].dur;
-	else
-		dur = st->eng_info[ENGINE_ACCEL].dur;
 
 	if (st->fifo_count_mode == BYTE_MODE)
 		fifo_count /= st->batch.pk_size;
-
-	/* In record mode, each number in fifo_count is 1 record or 1 sample */
-	st->ts_algo.last_run_time += dur * fifo_count;
-	if (st->ts_algo.last_run_time < t_pre)
-		st->ts_algo.last_run_time = t_pre;
-	if (st->ts_algo.last_run_time > t_post)
-		st->ts_algo.last_run_time = t_post;
 
 	return fifo_count;
 }
@@ -188,13 +166,23 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 {
 	u64 current_time;
 	int expected_lower_duration, expected_upper_duration;
+	s64 elaps_time, thresh;
+	struct inv_timestamp_algo *ts_algo = &st->ts_algo;
 
+	/* While reading FIFO COUNT, there can be several sensor ODRs.
+	 * We use (count + 10) * dur to cap the elapse_time between the last
+	 * time we read FIFO COUNT and the this time we read FIFO COUNT.
+	 */
+	elaps_time = ((u64) (st->sensor[i].dur)) * (st->sensor[i].count + 10);
+	thresh = ts_algo->last_run_time - elaps_time;
 	current_time = get_time_ns();
 
-	st->sensor[i].ts += st->sensor[i].dur + st->sensor[i].ts_adj;
+	st->sensor[i].ts += st->sensor[i].dur;
 
 	if (st->sensor[i].ts < st->sensor[i].previous_ts)
 		st->sensor[i].ts = st->sensor[i].previous_ts + st->sensor[i].dur;
+	if (st->sensor[i].ts < thresh)
+		st->sensor[i].ts = thresh;
 
 	/* hifi sensor limits ts jitter to +/- 2% */
 #if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
@@ -222,12 +210,6 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 		st->eng_info[st->ts_algo.clock_base].dur / 1000 * 980;
 #endif
 #endif
-
-	if (st->sensor[i].ts < st->sensor[i].previous_ts + expected_lower_duration)
-		st->sensor[i].ts = st->sensor[i].previous_ts + expected_lower_duration;
-	if (st->sensor[i].ts > st->sensor[i].previous_ts + expected_upper_duration)
-		st->sensor[i].ts = st->sensor[i].previous_ts + expected_upper_duration;
-
 	if (st->sensor[i].ts > current_time)
 		st->sensor[i].ts = current_time;
 
@@ -241,52 +223,11 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 		st->sensor[i].send = true;
 	}
 
-	if (st->header_count == 1)
+	if ((st->header_count == 1) &&
+			(st->sensor[i].engine_base == st->ts_algo.clock_base))
 		inv_update_dmp_ts(st, i);
 
 	return 0;
-}
-
-static void process_sensor_bounding(struct inv_mpu_state *st, int i)
-{
-	s64 elaps_time, thresh1, thresh2;
-	struct inv_timestamp_algo *ts_algo = &st->ts_algo;
-	u32 dur;
-
-	elaps_time = ((u64) (st->sensor[i].dur)) * st->sensor[i].count;
-	thresh1 = ts_algo->last_run_time - elaps_time;
-
-	dur = max_t(int, st->sensor[i].dur, MIN_DELAY);
-	thresh2 = thresh1 - dur;
-	if (thresh1 < 0)
-		thresh1 = 0;
-	if (thresh2 < 0)
-		thresh2 = 0;
-	st->sensor[i].ts_adj = 0;
-	if ((ts_algo->calib_counter >= INV_TIME_CALIB_THRESHOLD_1) &&
-						(!ts_algo->resume_flag)) {
-		if (st->sensor[i].ts < thresh2)
-			st->sensor[i].ts_adj = thresh2 - st->sensor[i].ts;
-	} else if ((ts_algo->calib_counter >=
-		INV_TIME_CALIB_THRESHOLD_1) && ts_algo->resume_flag) {
-		if (st->sensor[i].ts < thresh2)
-			st->sensor[i].ts = ts_algo->last_run_time -
-						elaps_time - JITTER_THRESH;
-	} else {
-		st->sensor[i].ts = ts_algo->last_run_time - elaps_time -
-							JITTER_THRESH;
-		st->sensor[i].previous_ts = st->sensor[i].ts;
-	}
-
-	if (st->sensor[i].ts > thresh1)
-		st->sensor[i].ts_adj = thresh1 - st->sensor[i].ts;
-	pr_debug("cali=%d\n", st->ts_algo.calib_counter);
-	pr_debug("adj= %lld\n", st->sensor[i].ts_adj);
-	pr_debug("dur= %d count= %d last= %lld\n", st->sensor[i].dur,
-				st->sensor[i].count, ts_algo->last_run_time);
-	if (st->sensor[i].ts_adj && (st->sensor[i].count > 1))
-		st->sensor[i].ts_adj = div_s64(st->sensor[i].ts_adj,
-							st->sensor[i].count);
 }
 
 /* inv_bound_timestamp (struct inv_mpu_state *st)
@@ -298,18 +239,19 @@ static void process_sensor_bounding(struct inv_mpu_state *st, int i)
  */
 int inv_bound_timestamp(struct inv_mpu_state *st)
 {
+	s64 elaps_time;
 	int i;
 	struct inv_timestamp_algo *ts_algo = &st->ts_algo;
 
+	if (ts_algo->calib_counter >= INV_TIME_CALIB_THRESHOLD_1)
+		return 0;
+
 	for (i = 0; i < SENSOR_NUM_MAX; i++) {
-		if (st->sensor[i].on) {
-			if (st->sensor[i].count) {
-				process_sensor_bounding(st, i);
-			} else if (ts_algo->calib_counter <
-				   INV_TIME_CALIB_THRESHOLD_1) {
-				st->sensor[i].ts = ts_algo->reset_ts;
-				st->sensor[i].previous_ts = st->sensor[i].ts;
-			}
+		if (st->sensor[i].count > 0) {
+			elaps_time = ((u64) (st->sensor[i].dur)) *
+							st->sensor[i].count;
+			st->sensor[i].ts = ts_algo->last_run_time - elaps_time;
+			st->sensor[i].previous_ts = st->sensor[i].ts;
 		}
 	}
 

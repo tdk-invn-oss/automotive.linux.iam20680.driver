@@ -169,6 +169,7 @@ static int inv_mpu_probe(struct spi_device *spi)
 		goto out_no_free;
 	}
 
+	iio_device_set_drvdata(indio_dev, indio_dev);
 	st = iio_priv(indio_dev);
 	mutex_init(&st->lock);
 	st->write = inv_spi_single_write;
@@ -186,8 +187,7 @@ static int inv_mpu_probe(struct spi_device *spi)
 	st->i2c_dis = BIT_SIFS_CFG_SPI_ONLY;
 #elif defined(CONFIG_INV_MPU_IIO_ICM45600)
 	//st->i2c_dis = BIT_SIFS_CFG_SPI_ONLY;
-#elif !defined(CONFIG_INV_MPU_IIO_ICM20602) \
-	&& !defined(CONFIG_INV_MPU_IIO_IAM20680)
+#else
 	st->i2c_dis = BIT_I2C_IF_DIS;
 #endif
 	st->bus_type = BUS_SPI;
@@ -301,7 +301,11 @@ static void inv_mpu_shutdown(struct spi_device *spi)
 /*
  *  inv_mpu_remove() - remove function.
  */
+#if KERNEL_VERSION(5, 18, 0) <= LINUX_VERSION_CODE
+static void inv_mpu_remove(struct spi_device *spi)
+#else
 static int inv_mpu_remove(struct spi_device *spi)
+#endif
 {
 	struct iio_dev *indio_dev = spi_get_drvdata(spi);
 	struct inv_mpu_state *st = iio_priv(indio_dev);
@@ -315,7 +319,9 @@ static int inv_mpu_remove(struct spi_device *spi)
 	iio_device_free(indio_dev);
 	dev_info(st->dev, "inv-mpu-iio module removed.\n");
 
+#if KERNEL_VERSION(5, 18, 0) > LINUX_VERSION_CODE
 	return 0;
+#endif
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -349,6 +355,7 @@ static const struct spi_device_id inv_mpu_id[] = {
 	{"icm20648", ICM20648},
 #else
 	{"icm20608d", ICM20608D},
+	{"icm20609i", ICM20609I},
 	{"icm20690", ICM20690},
 	{"icm20602", ICM20602},
 	{"iam20680", IAM20680},
@@ -359,6 +366,7 @@ static const struct spi_device_id inv_mpu_id[] = {
 	{"icm43600", ICM43600},
 	{"iim42600", ICM42600},
 	{"icm45600", ICM45600},
+	{"iim42653", ICM42686},
 #endif
 	{}
 };
@@ -374,6 +382,9 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	{
 		.compatible = "invensense,icm20608d",
 		.data = (void *)ICM20608D,
+	}, {
+		.compatible = "invensense,icm20609i",
+		.data = (void *)ICM20609I,
 	}, {
 		.compatible = "invensense,icm20690",
 		.data = (void *)ICM20690,
@@ -401,6 +412,9 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	}, {
 		.compatible = "invensense,iim42600",
 		.data = (void *)ICM42600,
+	}, {
+		.compatible = "invensense,iim42653",
+		.data = (void *)ICM42686,
 	}, {
 		.compatible = "invensense,icm45600",
 		.data = (void *)ICM45600,

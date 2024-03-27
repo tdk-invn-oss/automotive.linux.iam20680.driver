@@ -61,7 +61,7 @@
 #include "icm45600/inv_mpu_iio_reg_45600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"10.1.0"
+#define INVENSENSE_DRIVER_VERSION		"10.3.1"
 
 /* #define DEBUG */
 
@@ -140,6 +140,26 @@
 
 #define COVARIANCE_SIZE          14
 #define ACCEL_COVARIANCE_SIZE  (COVARIANCE_SIZE * sizeof(int))
+
+enum inv_devices {
+#ifdef CONFIG_INV_MPU_IIO_ICM20648
+	ICM20648,
+#else
+	ICM20608D,
+	ICM20609I,
+	ICM20789,
+	ICM20690,
+	ICM20602,
+	IAM20680,
+	ICM42600,
+	ICM42686,
+	ICM42688,
+	ICM40609D,
+	ICM43600,
+	ICM45600,
+#endif
+	INV_NUM_PARTS,
+};
 
 enum inv_bus_type {
 	BUS_I2C = 0,
@@ -554,7 +574,6 @@ struct inv_secondary_set {
  *  @running_rate: the actually running rate of engine.
  *  @orig_rate: original rate for each engine before downsample.
  *  @dur: duration for one tick.
- *  @last_update_time: last update time.
  */
 struct inv_engine_info {
 	u32 base_time;
@@ -564,7 +583,6 @@ struct inv_engine_info {
 	u32 running_rate;
 	u32 orig_rate;
 	u32 dur;
-	u64 last_update_time;
 };
 
 struct inv_ois {
@@ -608,8 +626,8 @@ struct inv_timestamp_algo {
  *	@step_cnt_total: step count total.
  *	@step_cnt_last_val: previous step count value from chip.
  *	@step_reset_last_val: check if it is first time after step count reset.
- *	@step_wptr: for Newport, step counter ring buffer read pointer.
- *	@step_rptr: for Newport, step counter ring buffer write pointer.
+ *	@step_wptr: for ICM45600, step counter ring buffer read pointer.
+ *	@step_rptr: for ICM45600, step counter ring buffer write pointer.
  */
 struct inv_apex_data {
 	uint32_t step_cnt_total;
@@ -1211,7 +1229,6 @@ int inv_motion_interrupt_control(struct inv_mpu_state *st,
 						u16 motion_event_cntl);
 
 int inv_bound_timestamp(struct inv_mpu_state *st);
-int inv_update_dmp_ts(struct inv_mpu_state *st, int ind);
 int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st);
 int inv_set_accel_intel(struct inv_mpu_state *st);
 

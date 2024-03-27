@@ -112,3 +112,8 @@ config INV_MPU_IIO_SPI
 	  The module will be called
 	  inv-mpu-iio-spi.
 
+config INV_MPU_IIO_IPL
+	bool "Add support for IPL"
+	depends on INV_MPU_IIO_ICM20608D
+	help
+	  Select here if you want to build a driver with IPL support.

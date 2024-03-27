@@ -101,6 +101,7 @@
 #define REG_USER_CTRL		0x6A
 #define BIT_COND_RST		0x01
 #define BIT_FIFO_RST		0x04
+#define BIT_I2C_IF_DIS		0x10
 #define BIT_FIFO_EN		0x40
 
 #define REG_PWR_MGMT_1		0x6B
@@ -225,18 +226,4 @@ enum inv_filter_e {
 #define MAX_MPU_MEM		8192
 #define MAX_PRS_RATE		281
 
-enum inv_devices {
-	ICM20608D,
-	ICM20789,
-	ICM20690,
-	ICM20602,
-	IAM20680,
-	ICM42600,
-	ICM42686,
-	ICM42688,
-	ICM40609D,
-	ICM43600,
-	ICM45600,
-	INV_NUM_PARTS,
-};
 #endif

@@ -35,7 +35,7 @@ static int inv_turn_on_fifo(struct inv_mpu_state *st)
 	r = inv_plat_single_write(st, REG_FIFO_EN, 0);
 	if (r)
 		return r;
-	r = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_RST);
+	r = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_RST | st->i2c_dis);
 	if (r)
 		return r;
 	fifo_en = 0;
