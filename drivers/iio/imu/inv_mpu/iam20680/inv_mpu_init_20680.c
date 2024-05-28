@@ -233,7 +233,7 @@ static int inv_save_offset_regs(struct inv_mpu_state *st)
 
 int inv_mpu_initialize(struct inv_mpu_state *st)
 {
-	u8 v;
+	u8 v = 0;
 	int result;
 	struct inv_chip_config_s *conf;
 	struct mpu_platform_data *plat;
@@ -241,20 +241,23 @@ int inv_mpu_initialize(struct inv_mpu_state *st)
 	conf = &st->chip_config;
 	plat = &st->plat_data;
 
-	/* verify whoami */
+	/* reset to ensure correct power-up */
+	inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_H_RESET);
+	msleep(100);
+
+	/* read whoami, do a reset and retry in case power-up is still not correct */
 	result = inv_plat_read(st, REG_WHO_AM_I, 1, &v);
+	if (result || v == 0x00 || v == 0xff) {
+		inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_H_RESET);
+		msleep(100);
+		result = inv_plat_read(st, REG_WHO_AM_I, 1, &v);
+	}
 	if (result)
 		return result;
 	pr_info("whoami= %x\n", v);
 	if (v == 0x00 || v == 0xff)
 		return -ENODEV;
 
-	/* reset to make sure previous state are not there */
-	result = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_H_RESET);
-	if (result)
-		return result;
-	usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
-	msleep(100);
 	/* toggle power state */
 	result = inv_set_power(st, false);
 	if (result)

@@ -164,8 +164,7 @@ int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st)
 
 int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 {
-	u64 current_time;
-	int expected_lower_duration, expected_upper_duration;
+	s64 current_time;
 	s64 elaps_time, thresh;
 	struct inv_timestamp_algo *ts_algo = &st->ts_algo;
 
@@ -173,45 +172,26 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 	 * We use (count + 10) * dur to cap the elapse_time between the last
 	 * time we read FIFO COUNT and the this time we read FIFO COUNT.
 	 */
-	elaps_time = ((u64) (st->sensor[i].dur)) * (st->sensor[i].count + 10);
+	elaps_time = (s64)(st->sensor[i].dur) * (s64)(st->sensor[i].count + 10);
 	thresh = ts_algo->last_run_time - elaps_time;
 	current_time = get_time_ns();
 
 	st->sensor[i].ts += st->sensor[i].dur;
+	pr_debug("unbounded ts=%lld\n", st->sensor[i].ts);
 
-	if (st->sensor[i].ts < st->sensor[i].previous_ts)
+	if (st->sensor[i].ts < st->sensor[i].previous_ts) {
 		st->sensor[i].ts = st->sensor[i].previous_ts + st->sensor[i].dur;
-	if (st->sensor[i].ts < thresh)
+		pr_debug("bound with ts order\n");
+	}
+	if (st->sensor[i].ts < thresh) {
 		st->sensor[i].ts = thresh;
+		pr_debug("bound with thresh=%lld\n", thresh);
+	}
 
-	/* hifi sensor limits ts jitter to +/- 2% */
-#if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
-	defined(CONFIG_INV_MPU_IIO_ICM20608D)
-	/* for DMP enabled devices */
-	expected_upper_duration =
-		st->eng_info[st->sensor[i].engine_base].dur *
-		st->sensor[i].div / 1000 * 1020;
-	expected_lower_duration =
-		st->eng_info[st->sensor[i].engine_base].dur *
-		st->sensor[i].div / 1000 * 980;
-#else
-	/* for no DMP devices */
-#if defined(CONFIG_INV_MPU_IIO_ICM42600) || \
-	defined(CONFIG_INV_MPU_IIO_ICM43600) || \
-	defined(CONFIG_INV_MPU_IIO_ICM45600)
-	expected_upper_duration =
-		st->eng_info[st->sensor[i].engine_base].dur / 1000 * 1020;
-	expected_lower_duration =
-		st->eng_info[st->sensor[i].engine_base].dur / 1000 * 980;
-#else
-	expected_upper_duration =
-		st->eng_info[st->ts_algo.clock_base].dur / 1000 * 1020;
-	expected_lower_duration =
-		st->eng_info[st->ts_algo.clock_base].dur / 1000 * 980;
-#endif
-#endif
-	if (st->sensor[i].ts > current_time)
+	if (st->sensor[i].ts > current_time) {
 		st->sensor[i].ts = current_time;
+		pr_debug("bound with current_time=%lld\n", current_time);
+	}
 
 	st->sensor[i].previous_ts = st->sensor[i].ts;
 
@@ -248,10 +228,11 @@ int inv_bound_timestamp(struct inv_mpu_state *st)
 
 	for (i = 0; i < SENSOR_NUM_MAX; i++) {
 		if (st->sensor[i].count > 0) {
-			elaps_time = ((u64) (st->sensor[i].dur)) *
-							st->sensor[i].count;
+			elaps_time = (s64)(st->sensor[i].dur) *
+				     (s64)(st->sensor[i].count + 1);
 			st->sensor[i].ts = ts_algo->last_run_time - elaps_time;
 			st->sensor[i].previous_ts = st->sensor[i].ts;
+			pr_debug("bound ts=%lld\n", st->sensor[i].ts);
 		}
 	}
 
