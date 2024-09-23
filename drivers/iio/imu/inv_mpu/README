@@ -33,7 +33,6 @@ make modifications as shown below:
       in <kernel_root>/drivers/iio/imu/Makefile
 
 
-
 Dts file
 ========
 In order to recognize the Invensense device on the I2C/SPI bus, dts(or dtsi)
@@ -101,6 +100,27 @@ These files are used to communicate with the driver. The files can be found at:
 
 Group and Owner for all entries should be updated to system/system at
 boot time to allow userspace to access properly.
+
+
+WoM feature
+===========
+IAM-20680 is able to wake the AP when detecting an acceleration behind
+a specified threshold.
+
+WoM is reported as an IIO event on sensor accel, rising threshold, on all axes (x|y|z).
+Userspace API is in iio sysfs:
+* iio:deviceX/events
+  - in_accel_x|y|z_thresh_rising_en: enable/disable (1/0)
+  - in_accel_x|y|z_thresh_rising_value: threshold value in g (from 0.004 to 1.02)
+* iio:deviceX
+  - in_accel_wake_rate: sampling frequency for WoM event
+
+WoM event can be read by requesting file descriptor using ioctl IIO_GET_EVENT_FD_IOCTL
+on iio chip device file.
+
+If you want to monitor a high frequency event (short in time) like a tap, you
+will need to use a high sampling frequency. Otherwise, using the lowest value
+can reduce the power to the minimum.
 
 
 License

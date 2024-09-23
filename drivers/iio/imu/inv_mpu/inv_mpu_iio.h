@@ -61,7 +61,7 @@
 #include "icm45600/inv_mpu_iio_reg_45600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"10.3.4"
+#define INVENSENSE_DRIVER_VERSION		"10.4.0"
 
 /* #define DEBUG */
 
@@ -870,7 +870,7 @@ struct inv_mpu_state {
 	u32 accel_covariance[COVARIANCE_SIZE];
 	 DECLARE_KFIFO(kf, u8, 128);
 	u32 activity_size;
-	int wom_thld;
+	unsigned int wom_thld;
 	u16 cntl;
 	u16 cntl2;
 	u16 motion_event_cntl;
@@ -916,6 +916,7 @@ struct inv_mpu_state {
 	u8 int_en_6;
 	int gesture_int_count;
 	u8 smplrt_div;
+	s64 it_timestamp;
 };
 
 /**
@@ -1122,6 +1123,7 @@ int inv_reset_fifo(struct inv_mpu_state *st, bool turn_off);
 int inv_create_dmp_sysfs(struct iio_dev *ind);
 int inv_check_chip_type(struct iio_dev *indio_dev, const char *name);
 int inv_write_compass_matrix(struct inv_mpu_state *st, int *adj);
+bool inv_mpu_interrupt_handler(struct iio_dev *indio_dev, s64 timestamp);
 irqreturn_t inv_read_fifo(int irq, void *p);
 #ifdef TIMER_BASED_BATCHING
 void inv_batch_work(struct work_struct *work);
@@ -1231,6 +1233,7 @@ int inv_motion_interrupt_control(struct inv_mpu_state *st,
 int inv_bound_timestamp(struct inv_mpu_state *st);
 int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st);
 int inv_set_accel_intel(struct inv_mpu_state *st);
+int inv_mpu_set_wom_lp(struct inv_mpu_state *st, bool enable);
 
 int inv_read_offset_regs(struct inv_mpu_state *st,
 		s16 accel[3], s16 gyro[3]);

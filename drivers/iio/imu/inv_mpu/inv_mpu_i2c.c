@@ -282,9 +282,15 @@ static int inv_i2c_mem_read(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
 /*
  *  inv_mpu_probe() - probe function.
  */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 static int inv_mpu_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
+#else
+static int inv_mpu_probe(struct i2c_client *client)
+{
+	const struct i2c_device_id *id = i2c_client_get_device_id(client);
+#endif
 	struct inv_mpu_state *st;
 	struct iio_dev *indio_dev;
 	int result;

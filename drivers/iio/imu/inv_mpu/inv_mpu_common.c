@@ -1437,11 +1437,13 @@ static int restore_interrupt_for_suspend(struct inv_mpu_state *st)
 int inv_mpu_suspend(struct iio_dev *indio_dev)
 {
 	struct inv_mpu_state *st = iio_priv(indio_dev);
+	int result = 0;
 
 	/* add code according to different request Start */
 	dev_info(st->dev, "%s suspend\n", st->hw->name);
 	mutex_lock(&st->lock);
 
+	disable_irq(st->irq);
 	st->resume_state = false;
 
 	set_interrupt_for_suspend(st);
@@ -1449,9 +1451,17 @@ int inv_mpu_suspend(struct iio_dev *indio_dev)
 	if (st->chip_config.wake_on)
 		enable_irq_wake(st->irq);
 
-	mutex_unlock(&st->lock);
+#ifdef CONFIG_INV_MPU_IIO_IAM20680
+	if (st->chip_config.wom_on) {
+		result = inv_mpu_set_wom_lp(st, true);
+		if (result)
+			dev_err(st->dev, "error %d enabling WoM\n", result);
+		enable_irq_wake(st->irq);
+	}
+#endif
 
-	return 0;
+	mutex_unlock(&st->lock);
+	return result;
 }
 EXPORT_SYMBOL_GPL(inv_mpu_suspend);
 
@@ -1466,6 +1476,9 @@ EXPORT_SYMBOL_GPL(inv_mpu_suspend);
 void inv_mpu_complete(struct iio_dev *indio_dev)
 {
 	struct inv_mpu_state *st = iio_priv(indio_dev);
+#ifdef CONFIG_INV_MPU_IIO_IAM20680
+	int result;
+#endif
 
 	dev_info(st->dev, "%s resume\n", st->hw->name);
 	if (st->resume_state)
@@ -1475,6 +1488,15 @@ void inv_mpu_complete(struct iio_dev *indio_dev)
 
 	if (st->chip_config.wake_on)
 		disable_irq_wake(st->irq);
+
+#ifdef CONFIG_INV_MPU_IIO_IAM20680
+	if (st->chip_config.wom_on) {
+		disable_irq_wake(st->irq);
+		result = inv_mpu_set_wom_lp(st, false);
+		if (result)
+			dev_err(st->dev, "error %d resuming WoM\n", result);
+	}
+#endif
 
 	restore_interrupt_for_suspend(st);
 
@@ -1486,6 +1508,7 @@ void inv_mpu_complete(struct iio_dev *indio_dev)
 	 * it has up to 1 second drift and should do proper processing
 	 */
 	st->ts_algo.resume_flag  = true;
+	enable_irq(st->irq);
 	mutex_unlock(&st->lock);
 	wake_up_interruptible(&st->wait_queue);
 }

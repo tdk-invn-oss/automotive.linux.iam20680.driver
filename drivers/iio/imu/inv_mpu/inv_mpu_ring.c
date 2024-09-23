@@ -35,6 +35,35 @@
 
 #include "inv_mpu_iio.h"
 
+static irqreturn_t inv_mpu_hard_it_handler(int irq, void *private)
+{
+	struct iio_dev *indio_dev = private;
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+
+	st->it_timestamp = get_time_ns();
+
+	return IRQ_WAKE_THREAD;
+}
+
+static irqreturn_t inv_mpu_thread_it_handler(int irq, void *private)
+{
+	struct iio_dev *indio_dev = private;
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+	bool data;
+
+	data = inv_mpu_interrupt_handler(indio_dev, st->it_timestamp);
+	if (data) {
+		indio_dev->pollfunc->timestamp = st->it_timestamp;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+		iio_trigger_poll_chained(st->trig);
+#else
+		iio_trigger_poll_nested(st->trig);
+#endif
+	}
+
+	return IRQ_HANDLED;
+}
+
 static void inv_push_timestamp(struct iio_dev *indio_dev, u64 t)
 {
 	u8 buf[IIO_BUFFER_BYTES];
@@ -612,8 +641,9 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 	st->trig->ops = &inv_mpu_trigger_ops;
 	iio_trigger_set_drvdata(st->trig, indio_dev);
 
-	ret = request_irq(st->irq, &iio_trigger_generic_data_rdy_poll,
-			  IRQF_TRIGGER_RISING, "inv_mpu", st->trig);
+	ret = request_threaded_irq(st->irq, inv_mpu_hard_it_handler,
+			inv_mpu_thread_it_handler, IRQF_TRIGGER_RISING,
+			"inv_mpu", indio_dev);
 	if (ret) {
 		dev_err(st->dev, "irq request error %d\n", ret);
 		goto error_free_trigger;

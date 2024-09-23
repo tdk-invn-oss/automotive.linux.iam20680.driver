@@ -26,6 +26,7 @@
 #include <linux/poll.h>
 #include <linux/miscdevice.h>
 #include <linux/math64.h>
+#include <linux/iio/events.h>
 
 #include "../inv_mpu_iio.h"
 
@@ -107,61 +108,11 @@ static int inv_process_20680_data(struct iio_dev *indio_dev)
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int total_bytes, tmp, res, fifo_count, pk_size, i;
 	u8 *dptr, *d;
-	u8 data[14];
 	bool done_flag;
-	u8 v;
 #ifdef SENSOR_DATA_FROM_REGISTERS
 	u8 reg;
 	int len;
 #endif
-
-	if (st->gesture_only_on && (!st->batch.timeout)) {
-		res = inv_plat_read(st, REG_INT_STATUS, 1, data);
-		if (res)
-			return res;
-		pr_debug("ges cnt=%d, statu=%x\n",
-						st->gesture_int_count, data[0]);
-		if (data[0] & (BIT_WOM_ALL_INT_EN)) {
-			if (!st->gesture_int_count) {
-				inv_switch_power_in_lp(st, true);
-				res = inv_plat_single_write(st, REG_INT_ENABLE,
-					BIT_WOM_ALL_INT_EN | BIT_DATA_RDY_EN);
-				if (res)
-					return res;
-				v = 0;
-				if (st->chip_config.gyro_enable)
-					v |= BITS_GYRO_FIFO_EN;
-
-				if (st->chip_config.accel_enable)
-					v |= BIT_ACCEL_FIFO_EN;
-				res = inv_plat_single_write(st, REG_FIFO_EN, v);
-				if (res)
-					return res;
-				/* First time wake up from WOM.
-				 * We don't need data in the FIFO
-				 */
-				res = inv_reset_fifo(st, true);
-				if (res)
-					return res;
-				res = inv_switch_power_in_lp(st, false);
-				st->gesture_int_count = WOM_DELAY_THRESHOLD;
-
-				return res;
-			}
-			st->gesture_int_count = WOM_DELAY_THRESHOLD;
-		} else {
-			if (!st->gesture_int_count) {
-				inv_switch_power_in_lp(st, true);
-				res = inv_plat_single_write(st, REG_FIFO_EN, 0);
-				res = inv_plat_single_write(st, REG_INT_ENABLE,
-					BIT_WOM_ALL_INT_EN);
-				inv_switch_power_in_lp(st, false);
-
-				return res;
-			}
-			st->gesture_int_count--;
-		}
-	}
 
 	fifo_count = inv_get_last_run_time_non_dmp_record_mode(st);
 	pr_debug("fifc= %d\n", fifo_count);
@@ -360,6 +311,38 @@ irqreturn_t inv_read_fifo(int irq, void *p)
 	iio_trigger_notify_done(indio_dev->trig);
 
 	return IRQ_HANDLED;
+}
+
+bool inv_mpu_interrupt_handler(struct iio_dev *indio_dev, s64 timestamp)
+{
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+	u8 status;
+	u64 wom_code;
+	bool data_ready;
+	int res;
+
+	mutex_lock(&st->lock);
+
+	res = inv_plat_read(st, REG_INT_STATUS, 1, &status);
+	if (res) {
+		pr_err("interrupt status register reading error %d\n", res);
+		data_ready = false;
+		goto exit;
+	}
+
+	/* handle WoM event */
+	if (status & BIT_WOM_ALL_INT) {
+		wom_code = IIO_MOD_EVENT_CODE(IIO_ACCEL, 0, IIO_MOD_X_OR_Y_OR_Z,
+				IIO_EV_TYPE_THRESH, IIO_EV_DIR_RISING);
+		iio_push_event(indio_dev, wom_code, timestamp);
+	}
+
+	/* handle data ready bit */
+	data_ready = (status & BIT_DATA_RDY_INT) ? true : false;
+
+exit:
+	mutex_unlock(&st->lock);
+	return data_ready;
 }
 
 #ifdef TIMER_BASED_BATCHING

@@ -30,7 +30,12 @@
 #include <linux/i2c.h>
 #include <linux/version.h>
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+#include <linux/minmax.h>
+#endif
+
 #include "../inv_mpu_iio.h"
+
 
 static const struct inv_hw_s hw_info[INV_NUM_PARTS] = {
 	[IAM20680] = {128, "iam20680"},
@@ -777,6 +782,242 @@ static ssize_t misc_flush_batch_store(struct device *dev,
 	return count;
 }
 
+static unsigned int inv_convert_wom_to_val(unsigned int threshold)
+{
+	/* 4mg per LSB converted in g in micro (1000000) */
+	const unsigned int convert = 4U * 1000U;
+	unsigned int value;
+
+	value = threshold * convert;
+
+	/* compute the differential by multiplying by the frequency */
+	return value;
+}
+
+static unsigned int inv_convert_val_to_wom(unsigned int val)
+{
+	/* 4mg per LSB converted in g in micro (1000000) */
+	const unsigned int convert = 4U * 1000U;
+	unsigned int value;
+
+	/* return 0 only if val is 0 */
+	if (val == 0)
+		return 0;
+
+	value = val / convert;
+
+	/* limit value to 8 bits and prevent 0 */
+	return min(255U, max(1U, value));
+}
+
+static int inv_set_lp_odr(struct inv_mpu_state *st, unsigned int freq)
+{
+	static const unsigned int freqs[] = {500, 250, 125, 62, 31, 16, 8, 4};
+	static const unsigned int reg_values[] = {
+		INV_LPOSC_500HZ, INV_LPOSC_250HZ, INV_LPOSC_125HZ, INV_LPOSC_62HZ,
+		INV_LPOSC_31HZ, INV_LPOSC_16HZ, INV_LPOSC_8HZ, INV_LPOSC_4HZ,
+	};
+	unsigned int val, i;
+
+	/* by default use lowest value */
+	val = INV_LPOSC_4HZ;
+	/* found the nearest inferior frequency */
+	for (i = 0; i < ARRAY_SIZE(freqs); ++i) {
+		if (freq >= freqs[i]) {
+			val = reg_values[i];
+			break;
+		}
+	}
+
+	return inv_plat_single_write(st, REG_LP_MODE_CFG, val);
+}
+
+static int inv_set_wom_lp(struct inv_mpu_state *st, bool on)
+{
+	int result;
+
+	if (on) {
+		result = inv_plat_single_write(st, REG_20680_ACCEL_CONFIG2, 0x07);
+		if (result)
+			return result;
+
+		/* set low power ODR based on accel wake-up frequency */
+		result = inv_set_lp_odr(st, st->sensor_l[SENSOR_L_ACCEL_WAKE].rate);
+		if (result)
+			return result;
+
+		/* set cycle mode */
+		result = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_LP_EN | BIT_CLK_PLL);
+	} else {
+		/* disable cycle mode */
+		result = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_CLK_PLL);
+		if (result)
+			return result;
+
+		result = inv_set_accel_config2(st, st->chip_config.lp_en_set);
+	}
+
+	return result;
+}
+
+int inv_mpu_set_wom_lp(struct inv_mpu_state *st, bool en)
+{
+	u8 val;
+	int result;
+
+	if (en) {
+		if (st->chip_config.is_asleep || st->chip_config.lp_en_set) {
+			result = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_CLK_PLL);
+			if (result)
+				return result;
+			usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 100);
+		}
+
+		if (!st->chip_config.accel_enable) {
+			result = inv_plat_read(st, REG_PWR_MGMT_2, 1, &val);
+			if (result)
+				return result;
+			val &= ~BIT_PWR_ACCEL_STBY;
+			result = inv_plat_single_write(st, REG_PWR_MGMT_2, val);
+			if (result)
+				return result;
+			msleep(INV_IAM20680_ACCEL_START_TIME);
+		}
+
+		result = inv_plat_single_write(st, REG_ACCEL_WOM_THR, st->wom_thld);
+		if (result)
+			return result;
+
+		result = inv_plat_single_write(st, REG_ACCEL_INTEL_CTRL,
+				BIT_ACCEL_INTEL_EN | BIT_ACCEL_INTEL_MODE);
+		if (result)
+			return result;
+
+		result = inv_plat_single_write(st, REG_INT_ENABLE, BIT_WOM_X_INT_EN | BIT_WOM_Y_INT_EN | BIT_WOM_X_INT_EN);
+		if (result)
+			return result;
+
+		result = inv_set_wom_lp(st, true);
+		if (result)
+			return result;
+	} else {
+		result = inv_set_wom_lp(st, false);
+		if (result)
+			return result;
+
+		result = inv_plat_single_write(st, REG_INT_ENABLE, 0x00);
+		if (result)
+			return result;
+
+		result = inv_plat_single_write(st, REG_ACCEL_INTEL_CTRL, 0x00);
+		if (result)
+			return result;
+
+		if (!st->chip_config.accel_enable) {
+			result = inv_plat_read(st, REG_PWR_MGMT_2, 1, &val);
+			if (result)
+				return result;
+			val |= BIT_PWR_ACCEL_STBY;
+			result = inv_plat_single_write(st, REG_PWR_MGMT_2, val);
+			if (result)
+				return result;
+		}
+
+		if (st->chip_config.is_asleep || st->chip_config.lp_en_set) {
+			val = BIT_CLK_PLL;
+			val |= st->chip_config.is_asleep ? BIT_SLEEP : 0;
+			val |= st->chip_config.lp_en_set ? BIT_LP_EN : 0;
+			result = inv_plat_single_write(st, REG_PWR_MGMT_1, val);
+			if (result)
+				return result;
+		}
+	}
+
+	return 0;
+}
+
+static int inv_mpu_read_event_config(struct iio_dev *indio_dev,
+		const struct iio_chan_spec *chan, enum iio_event_type type,
+		enum iio_event_direction dir)
+{
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+
+	if (chan->type != IIO_ACCEL || type != IIO_EV_TYPE_THRESH ||
+			dir != IIO_EV_DIR_RISING)
+		return -EINVAL;
+
+	return st->chip_config.wom_on ? 1 : 0;
+}
+
+static int inv_mpu_write_event_config(struct iio_dev *indio_dev,
+		const struct iio_chan_spec *chan, enum iio_event_type type,
+		enum iio_event_direction dir, int state)
+{
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+	int enable;
+
+	if (chan->type != IIO_ACCEL || type != IIO_EV_TYPE_THRESH ||
+			dir != IIO_EV_DIR_RISING)
+		return -EINVAL;
+
+	enable = !!state;
+	st->chip_config.wom_on = enable;
+
+	return 0;
+}
+
+static int inv_mpu_read_event_value(struct iio_dev *indio_dev,
+		const struct iio_chan_spec *chan, enum iio_event_type type,
+		enum iio_event_direction dir, enum iio_event_info info, int *val,
+		int *val2)
+{
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+	unsigned int value;
+
+	/* support only WoM (accel roc rising) event value */
+	if (chan->type != IIO_ACCEL || type != IIO_EV_TYPE_THRESH ||
+			dir != IIO_EV_DIR_RISING || info != IIO_EV_INFO_VALUE)
+		return -EINVAL;
+
+	/* convert to value and return in micro */
+	value = inv_convert_wom_to_val(st->wom_thld);
+	*val = value / 1000000U;
+	*val2 = value % 1000000U;
+
+	return IIO_VAL_INT_PLUS_MICRO;
+}
+
+static int inv_mpu_write_event_value(struct iio_dev *indio_dev,
+		const struct iio_chan_spec *chan, enum iio_event_type type,
+		enum iio_event_direction dir, enum iio_event_info info,
+		int val, int val2)
+{
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+	unsigned int value;
+
+	/* support only WoM (accel roc rising) event value */
+	if (chan->type != IIO_ACCEL || type != IIO_EV_TYPE_THRESH ||
+	    dir != IIO_EV_DIR_RISING || info != IIO_EV_INFO_VALUE)
+		return -EINVAL;
+
+	if (val < 0 || val2 < 0)
+		return -EINVAL;
+
+	/* convert value to wom and save it */
+	value = (unsigned int)val * 1000000U + (unsigned int)val2;
+	st->wom_thld = inv_convert_val_to_wom(value);
+
+	return 0;
+}
+
+static const struct iio_event_spec inv_mpu_wom_events[] = {
+	{
+		.type = IIO_EV_TYPE_THRESH,
+		.dir = IIO_EV_DIR_RISING,
+		.mask_separate = BIT(IIO_EV_INFO_VALUE) | BIT(IIO_EV_INFO_ENABLE),
+	},
+};
+
 static const struct iio_chan_spec inv_mpu_channels[] = {
 	{
 		.type = IIO_ACCEL,
@@ -786,6 +1027,13 @@ static const struct iio_chan_spec inv_mpu_channels[] = {
 			.realbits = 64,
 			.storagebits = 64,
 		},
+	}, {
+		.type = IIO_ACCEL,
+		.modified = 1,
+		.channel2 = IIO_MOD_X_OR_Y_OR_Z,
+		.event_spec = inv_mpu_wom_events,
+		.num_event_specs = ARRAY_SIZE(inv_mpu_wom_events),
+		.scan_index = -1,
 	},
 };
 
@@ -1016,6 +1264,12 @@ static const struct iio_info mpu_info = {
 	.driver_module = THIS_MODULE,
 #endif
 	.attrs = &inv_attribute_group,
+	.read_event_config =	inv_mpu_read_event_config,
+	.write_event_config =	inv_mpu_write_event_config,
+	.read_event_value =	inv_mpu_read_event_value,
+	.write_event_value =	inv_mpu_write_event_value,
+
+
 };
 
 /*
