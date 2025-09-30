@@ -17,14 +17,7 @@
 
 /* register settings */
 #define DEF_SELFTEST_GYRO_SENS		(32768 / 250)
-/* wait time before collecting data */
-#define MAX_PACKETS			20
-#define SELFTEST_WAIT_TIME		(MAX_PACKETS * 10)
-#define DEF_ST_STABLE_TIME		20
-#define DEF_GYRO_SCALE			131
 #define DEF_ST_PRECISION		1000
-#define DEF_ST_ACCEL_FS_MG		2000UL
-#define DEF_ST_SCALE			32768
 #define DEF_ST_TRY_TIMES		2
 #define DEF_ST_ACCEL_RESULT_SHIFT	1
 #define DEF_ST_SAMPLES			200
@@ -33,10 +26,8 @@
 #define DEF_ACCEL_ST_SHIFT_DELTA_MAX	1500
 #define DEF_GYRO_CT_SHIFT_DELTA		500
 
-#define SENSOR_UP_TIME			30
-#define REG_UP_TIME			2
-
 #define DEF_ST_ACCEL_FS_MG		2000UL
+#define DEF_ST_SCALE			32768
 #define DEF_ACCEL_ST_SHIFT_DELTA	500
 #define ACCEL_ST_AL_MIN ((DEF_ACCEL_ST_AL_MIN * DEF_ST_SCALE \
 				 / DEF_ST_ACCEL_FS_MG) * DEF_ST_PRECISION)
@@ -46,17 +37,11 @@
 #define THREE_AXIS			3
 #define DEF_ST_IAM20680_ACCEL_LPF	2
 #define DEF_SELFTEST_SAMPLE_RATE	0  /* 1000Hz */
-#define DEF_SELFTEST_SAMPLE_RATE_LP	3  /*  250Hz */
-#define DEF_SELFTEST_SAMPLE_RATE_ACC_LP	10 /*  250Hz LPOSC_CLKSEL */
+#define DEF_SELFTEST_SAMPLING_MS	1  /* 1ms for 1000Hz */
 #define SAMPLE_RATE_CHANGE_STABLE	50
 #define DEF_SELFTEST_20680_ACCEL_FS	(0 << 3)
 #define DEF_SELFTEST_GYRO_FS		(0 << 3)
 #define DEF_ST_20680_STABLE_TIME	20
-#define BIT_ACCEL_OUT			0x08
-#define BITS_GYRO_OUT			0x70
-#define THREE_AXIS			3
-#define DEF_GYRO_WAIT_TIME		10
-#define DEF_GYRO_WAIT_TIME_LP		50
 
 /* Gyro Offset Max Value (dps) */
 #define DEF_GYRO_OFFSET_MAX		20
@@ -252,51 +237,6 @@ static int inv_recover_setting(struct inv_mpu_state *st)
 	return result;
 }
 
-static int inv_switch_engine(struct inv_mpu_state *st, bool en, u32 mask)
-{
-	u8 data, mgmt_1;
-	int result;
-
-	if (mask == BIT_PWR_GYRO_STBY) {
-		result = inv_plat_read(st, REG_PWR_MGMT_1, 1, &mgmt_1);
-		if (result)
-			return result;
-		mgmt_1 &= ~BIT_CLK_MASK;
-	}
-
-	if ((mask == BIT_PWR_GYRO_STBY) && (!en)) {
-		result = inv_plat_single_write(st, REG_PWR_MGMT_1, mgmt_1);
-		if (result)
-			return result;
-	}
-
-	result = inv_plat_read(st, REG_PWR_MGMT_2, 1, &data);
-	if (result)
-		return result;
-	if (en)
-		data &= (~mask);
-	else
-		data |= mask;
-	data |= BIT_FIFO_LP_EN;
-	result = inv_plat_single_write(st, REG_PWR_MGMT_2, data);
-	if (result)
-		return result;
-
-	if ((mask == BIT_PWR_GYRO_STBY) && en) {
-		/* only gyro on needs sensor up time */
-		msleep(SENSOR_UP_TIME);
-		/* after gyro is on & stable, switch internal clock to PLL */
-		mgmt_1 |= BIT_CLK_PLL;
-		result = inv_plat_single_write(st, REG_PWR_MGMT_1, mgmt_1);
-		if (result)
-			return result;
-	}
-	if ((mask == BIT_PWR_ACCEL_STBY) && en)
-		msleep(REG_UP_TIME);
-
-	return 0;
-}
-
 /**
  * inv_check_gyro_self_test() - check gyro self test. this function
  *                                   returns zero as success. A non-zero return
@@ -419,70 +359,186 @@ static int inv_check_accel_self_test(struct inv_mpu_state *st,
 	return ret_val;
 }
 
+static int inv_read_data_registers(struct inv_mpu_state *st, unsigned int sampling_ms,
+				   int samples_nb, int *gyro, int *accel)
+{
+	const unsigned int packet_size = BYTES_PER_SENSOR * 2 + BYTES_FOR_TEMP;
+	__be16 *data;
+	int nb;
+	int result;
+
+	gyro[0] = 0;
+	gyro[1] = 0;
+	gyro[2] = 0;
+	accel[0] = 0;
+	accel[1] = 0;
+	accel[2] = 0;
+
+	for (nb = 0; nb < samples_nb; ++nb) {
+		result = inv_plat_read(st, REG_RAW_ACCEL, packet_size,
+				       st->fifo_data_store);
+		if (result)
+			return result;
+		data = (__be16 *)st->fifo_data_store;
+		pr_debug("%s self_test data - %+d, %+d, %+d : %+d, %+d, %+d\n", st->hw->name,
+			 (s16)be16_to_cpu(data[0]), (s16)be16_to_cpu(data[1]),
+			 (s16)be16_to_cpu(data[2]), (s16)be16_to_cpu(data[4]),
+			 (s16)be16_to_cpu(data[5]), (s16)be16_to_cpu(data[6]));
+		/* accumulate samples: Accel x, y, z - Temp - Gyro x, y, z */
+		accel[0] += (s16)be16_to_cpu(data[0]);
+		accel[1] += (s16)be16_to_cpu(data[1]);
+		accel[2] += (s16)be16_to_cpu(data[2]);
+		/* data[3] is temperature */
+		gyro[0] += (s16)be16_to_cpu(data[4]);
+		gyro[1] += (s16)be16_to_cpu(data[5]);
+		gyro[2] += (s16)be16_to_cpu(data[6]);
+		mdelay(sampling_ms);
+	}
+
+	accel[0] /= samples_nb;
+	accel[1] /= samples_nb;
+	accel[2] /= samples_nb;
+	gyro[0] /= samples_nb;
+	gyro[1] /= samples_nb;
+	gyro[2] /= samples_nb;
+
+	return 0;
+}
+
+static int inv_read_data_fifo(struct inv_mpu_state *st, unsigned int sampling_ms,
+			      int samples_nb, int *gyro, int *accel)
+{
+	const unsigned int packet_size = BYTES_PER_SENSOR * 2;
+	unsigned int fifo_size, fifo_max, duration_ms;
+	__be16 fifo_count;
+	__be16 *data;
+	int packet_nb, nb, i;
+	int result;
+
+	gyro[0] = 0;
+	gyro[1] = 0;
+	gyro[2] = 0;
+	accel[0] = 0;
+	accel[1] = 0;
+	accel[2] = 0;
+
+	/* computes fifo max packet using 2/3 fifo size */
+	switch (st->chip_rev) {
+	case INV_IAM20680_VAR_HV:
+		return -EINVAL;
+	case INV_IAM20680_NO_VAR:
+		fifo_size = (NO_VAR_FIFO_SIZE * 2) / 3;
+		break;
+	default:
+		fifo_size = (HARDWARE_FIFO_SIZE * 2) / 3;
+		break;
+	}
+	fifo_max = fifo_size / packet_size;
+	duration_ms = fifo_max * sampling_ms;
+
+	for (nb = 0; nb < samples_nb; nb += packet_nb) {
+		/* Reset FIFO */
+		result = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_EN | BIT_FIFO_RST);
+		if (result)
+			return result;
+		udelay(4);
+		/* enable sensor output to FIFO */
+		result = inv_plat_single_write(st, REG_FIFO_EN,
+					       BITS_GYRO_FIFO_EN | BIT_ACCEL_FIFO_EN);
+		if (result)
+			return result;
+
+		msleep(duration_ms);
+
+		/* disable sensor output to FIFO */
+		result = inv_plat_single_write(st, REG_FIFO_EN, 0);
+		if (result)
+			return result;
+
+		/* read FIFO data */
+		result = inv_plat_read(st, REG_FIFO_COUNT_H, sizeof(fifo_count),
+				       (u8 *)&fifo_count);
+		if (result)
+			return result;
+		packet_nb = be16_to_cpu(fifo_count) / packet_size;
+		if (packet_nb > (samples_nb - nb))
+			packet_nb = samples_nb - nb;
+		pr_debug("%s self_test fifo count=%u, packet_nb=%u\n",
+			 st->hw->name, be16_to_cpu(fifo_count), packet_nb);
+		result = inv_plat_read(st, REG_FIFO_R_W, packet_nb * packet_size,
+				       st->fifo_data_store);
+		if (result)
+			return result;
+
+		for (i = 0; i < packet_nb; ++i) {
+			data = (__be16 *)&st->fifo_data_store[i * packet_size];
+			/* accumulate samples: Accel x, y, z - Gyro x, y, z */
+			pr_debug("%s self_test data - %+d, %+d, %+d : %+d, %+d, %+d\n", st->hw->name,
+				 (s16)get_unaligned_be16(&data[0]), (s16)get_unaligned_be16(&data[1]),
+				 (s16)get_unaligned_be16(&data[2]), (s16)get_unaligned_be16(&data[3]),
+				 (s16)get_unaligned_be16(&data[4]), (s16)get_unaligned_be16(&data[5]));
+			accel[0] += (s16)get_unaligned_be16(&data[0]);
+			accel[1] += (s16)get_unaligned_be16(&data[1]);
+			accel[2] += (s16)get_unaligned_be16(&data[2]);
+			gyro[0] += (s16)get_unaligned_be16(&data[3]);
+			gyro[1] += (s16)get_unaligned_be16(&data[4]);
+			gyro[2] += (s16)get_unaligned_be16(&data[5]);
+		}
+	}
+
+	/* Reset FIFO */
+	result = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_EN | BIT_FIFO_RST);
+	if (result)
+		return result;
+
+	accel[0] /= samples_nb;
+	accel[1] /= samples_nb;
+	accel[2] /= samples_nb;
+	gyro[0] /= samples_nb;
+	gyro[1] /= samples_nb;
+	gyro[2] /= samples_nb;
+
+	return 0;
+}
+
+static inline int inv_read_data(struct inv_mpu_state *st, unsigned int sampling_ms,
+				int samples_nb, int *gyro, int *accel)
+{
+	if (st->no_fifo)
+		return inv_read_data_registers(st, sampling_ms, samples_nb, gyro, accel);
+	else
+		return inv_read_data_fifo(st, sampling_ms, samples_nb, gyro, accel);
+}
+
 /*
  *  inv_do_test() - do the actual test of self testing
  */
 static int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
-		int *gyro_result, int *accel_result, int lp_mode)
+		       int *gyro_result, int *accel_result)
 {
-	int result, i, j, packet_size;
-	u8 data[BYTES_PER_SENSOR * 2], d, dd;
-	int fifo_count, packet_count, ind, s;
+	int result, i;
+	u8 d;
 
-	packet_size = BYTES_PER_SENSOR * 2;
-
-	/* disable interrupt */
-	result = inv_plat_single_write(st, REG_INT_ENABLE, 0);
-	if (result)
-		return result;
-	/* disable the sensor output to FIFO */
-	result = inv_plat_single_write(st, REG_FIFO_EN, 0);
-	if (result)
-		return result;
-	/* disable fifo reading */
-	result = inv_plat_single_write(st, REG_USER_CTRL, 0);
-	if (result)
-		return result;
-	/* clear FIFO */
-	result = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_RST);
-	if (result)
-		return result;
 	/* setup parameters */
 	result = inv_plat_single_write(st, REG_CONFIG, INV_FILTER_98HZ);
 	if (result)
 		return result;
 
-	/* gyro lp mode */
-	if (lp_mode == 1)
-		d = BIT_GYRO_CYCLE_EN;
-	else if (lp_mode == 2)
-		d = DEF_SELFTEST_SAMPLE_RATE_ACC_LP;
-	else
-		d = 0;
-	result = inv_plat_single_write(st, REG_LP_MODE_CTRL, d);
+	/* gyro lp mode off */
+	result = inv_plat_single_write(st, REG_LP_MODE_CTRL, 0);
 	if (result)
 		return result;
 
 	/* config accel LPF register */
-	if (lp_mode == 2)
-		d = BIT_ACCEL_FCHOCIE_B;
-	else
-		d = DEF_ST_IAM20680_ACCEL_LPF;
-	result = inv_plat_single_write(st, REG_20680_ACCEL_CONFIG2, d);
+	result = inv_iam20680_set_accel_config2(st, DEF_ST_IAM20680_ACCEL_LPF);
 	if (result)
 		return result;
 
-	if (lp_mode) {
-		result = inv_plat_single_write(st, REG_SAMPLE_RATE_DIV,
-				DEF_SELFTEST_SAMPLE_RATE_LP);
-	} else {
-		result = inv_plat_single_write(st, REG_SAMPLE_RATE_DIV,
-				DEF_SELFTEST_SAMPLE_RATE);
-	}
+	result = inv_plat_single_write(st, REG_SAMPLE_RATE_DIV,
+				       DEF_SELFTEST_SAMPLE_RATE);
 	if (result)
 		return result;
-	/* wait for the sampling rate change to stabilize */
-	mdelay(SAMPLE_RATE_CHANGE_STABLE);
+
 	result = inv_plat_single_write(st, REG_GYRO_CONFIG,
 		self_test_flag | DEF_SELFTEST_GYRO_FS);
 	if (result)
@@ -495,103 +551,24 @@ static int inv_do_test(struct inv_mpu_state *st, int self_test_flag,
 		return result;
 
 	/* wait for the output to get stable */
-	msleep(DEF_ST_20680_STABLE_TIME);
+	msleep(100);
 
-	/* enable FIFO reading */
-	result = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_EN);
+	/* read samples */
+	result = inv_read_data(st, DEF_SELFTEST_SAMPLING_MS,
+			       DEF_ST_SAMPLES, gyro_result, accel_result);
 	if (result)
 		return result;
-	/* enable sensor output to FIFO */
-	d = BITS_GYRO_OUT | BIT_ACCEL_OUT;
-	for (i = 0; i < THREE_AXIS; i++) {
-		gyro_result[i] = 0;
-		accel_result[i] = 0;
-	}
-	s = 0;
-	while (s < 200 /*st->self_test.samples*/) {
-		/* Stop FIFO */
-		result = inv_plat_single_write(st, REG_USER_CTRL, 0);
-		if (result)
-			return result;
-		/* clear FIFO */
-		result = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_RST);
-		if (result)
-			return result;
-		/* enable FIFO reading */
-		result = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_EN);
-		if (result)
-			return result;
 
-		/* accel lp mode */
-		dd = BIT_CLK_PLL;
-		if (lp_mode == 2)
-			dd |= BIT_LP_EN;
-		else
-			dd &= ~BIT_LP_EN;
-		result = inv_plat_single_write(st, REG_PWR_MGMT_1, dd);
-		if (result)
-			return result;
+	pr_debug("%s self_test accel average data - %+d %+d %+d\n",
+		 st->hw->name, accel_result[0], accel_result[1],
+		 accel_result[2]);
+	pr_debug("%s self_test gyro average data - %+d %+d %+d\n",
+		 st->hw->name, gyro_result[0], gyro_result[1],
+		 gyro_result[2]);
 
-		result = inv_plat_single_write(st, REG_FIFO_EN, d);
-		if (result)
-			return result;
-		if (lp_mode)
-			mdelay(DEF_GYRO_WAIT_TIME_LP);
-		else
-			mdelay(DEF_GYRO_WAIT_TIME);
-
-		result = inv_plat_single_write(st, REG_FIFO_EN, 0);
-		if (result)
-			return result;
-
-		result = inv_plat_read(st, REG_FIFO_COUNT_H,
-					FIFO_COUNT_BYTE, data);
-		if (result)
-			return result;
-		fifo_count = be16_to_cpup((__be16 *)(&data[0]));
-		pr_debug("%s self_test fifo_count - %d\n",
-			 st->hw->name, fifo_count);
-		packet_count = fifo_count / packet_size;
-		i = 0;
-		while ((i < packet_count) && (s < 200)) {
-			short vals[3];
-
-			result = inv_plat_read(st, REG_FIFO_R_W,
-				packet_size, data);
-			if (result)
-				return result;
-			ind = 0;
-
-			for (j = 0; j < THREE_AXIS; j++) {
-				vals[j] = (short)be16_to_cpup(
-					(__be16 *)(&data[ind + 2 * j]));
-				accel_result[j] += vals[j];
-			}
-			ind += BYTES_PER_SENSOR;
-			pr_debug(
-				"%s self_test accel data - %d %+d %+d %+d\n",
-				st->hw->name, s, vals[0], vals[1], vals[2]);
-
-			for (j = 0; j < THREE_AXIS; j++) {
-				vals[j] = (short)be16_to_cpup(
-					(__be16 *)(&data[ind + 2 * j]));
-				gyro_result[j] += vals[j];
-			}
-			pr_debug("%s self_test gyro data - %d %+d %+d %+d\n",
-				st->hw->name, s, vals[0], vals[1], vals[2]);
-
-			s++;
-			i++;
-		}
-	}
-
-	for (j = 0; j < THREE_AXIS; j++) {
-		accel_result[j] = accel_result[j] / s;
-		accel_result[j] *= DEF_ST_PRECISION;
-	}
-	for (j = 0; j < THREE_AXIS; j++) {
-		gyro_result[j] = gyro_result[j] / s;
-		gyro_result[j] *= DEF_ST_PRECISION;
+	for (i = 0; i < THREE_AXIS; ++i) {
+		accel_result[i] *= DEF_ST_PRECISION;
+		gyro_result[i] *= DEF_ST_PRECISION;
 	}
 
 	return 0;
@@ -602,19 +579,19 @@ static int inv_power_up_self_test(struct inv_mpu_state *st)
 {
 	int result;
 
-	result = inv_switch_power_in_lp(st, true);
+	/* turn chip on in LN mode */
+	result = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_CLK_PLL);
+	if (result)
+		return result;
+	usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + REG_UP_TIME_USEC / 2);
 
 	/* make sure no interrupts */
 	result = inv_plat_single_write(st, REG_INT_ENABLE, 0);
 	if (result)
 		return result;
 
-	if (result)
-		return result;
-	result = inv_switch_engine(st, true, BIT_PWR_ACCEL_STBY);
-	if (result)
-		return result;
-	result = inv_switch_engine(st, true, BIT_PWR_GYRO_STBY);
+	/* turn all sensors on */
+	result = inv_plat_single_write(st, REG_PWR_MGMT_2, 0);
 	if (result)
 		return result;
 
@@ -629,11 +606,6 @@ int inv_hw_self_test(struct inv_mpu_state *st)
 	int result;
 	int gyro_bias_st[THREE_AXIS], gyro_bias_regular[THREE_AXIS];
 	int accel_bias_st[THREE_AXIS], accel_bias_regular[THREE_AXIS];
-#ifdef ENABLE_GYRO_HW_SELFTEST
-	int gyro_bias_regular_lp[THREE_AXIS];
-	int accel_bias_regular_lp[THREE_AXIS];
-	int dummy_bias_regular[THREE_AXIS];
-#endif
 	int test_times, i;
 	char accel_result, gyro_result;
 
@@ -649,7 +621,7 @@ int inv_hw_self_test(struct inv_mpu_state *st)
 	test_times = DEF_ST_TRY_TIMES;
 	while (test_times > 0) {
 		result = inv_do_test(st, 0, gyro_bias_regular,
-			accel_bias_regular, 0);
+				     accel_bias_regular);
 		if (result == -EAGAIN)
 			test_times--;
 		else
@@ -666,8 +638,8 @@ int inv_hw_self_test(struct inv_mpu_state *st)
 
 	test_times = DEF_ST_TRY_TIMES;
 	while (test_times > 0) {
-		result = inv_do_test(st, BITS_SELF_TEST_EN, gyro_bias_st,
-					accel_bias_st, 0);
+		result = inv_do_test(st, BITS_SELF_TEST_EN,
+				     gyro_bias_st, accel_bias_st);
 		if (result == -EAGAIN)
 			test_times--;
 		else
@@ -681,40 +653,6 @@ int inv_hw_self_test(struct inv_mpu_state *st)
 	pr_debug("%s self_test gyro bias_st - %+d %+d %+d\n",
 		st->hw->name, gyro_bias_st[0], gyro_bias_st[1],
 		gyro_bias_st[2]);
-
-#ifdef ENABLE_GYRO_HW_SELFTEST
-	/* lp gyro mode */
-	test_times = DEF_ST_TRY_TIMES;
-	while (test_times > 0) {
-		result = inv_do_test(st, 0, gyro_bias_regular_lp,
-			dummy_bias_regular, 1);
-		if (result == -EAGAIN)
-			test_times--;
-		else
-			test_times = 0;
-	}
-	if (result)
-		goto test_fail;
-	pr_debug("%s self_test gyro bias_regular lp - %+d %+d %+d\n",
-		 st->hw->name, gyro_bias_regular_lp[0], gyro_bias_regular_lp[1],
-		 gyro_bias_regular_lp[2]);
-
-	/* lp accel mode */
-	test_times = DEF_ST_TRY_TIMES;
-	while (test_times > 0) {
-		result = inv_do_test(st, 0, dummy_bias_regular,
-			accel_bias_regular_lp, 2);
-		if (result == -EAGAIN)
-			test_times--;
-		else
-			test_times = 0;
-	}
-	if (result)
-		goto test_fail;
-	pr_debug("%s self_test accel bias_regular lp - %+d %+d %+d\n",
-		 st->hw->name, accel_bias_regular_lp[0],
-		 accel_bias_regular_lp[1], accel_bias_regular_lp[2]);
-#endif
 
 	/* copy bias */
 	for (i = 0; i < 3; i++) {

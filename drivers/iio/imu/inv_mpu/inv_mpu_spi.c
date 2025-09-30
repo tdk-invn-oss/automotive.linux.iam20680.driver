@@ -25,7 +25,9 @@
 #include <linux/interrupt.h>
 #include <linux/kfifo.h>
 #include <linux/poll.h>
+#include <linux/limits.h>
 #include <linux/miscdevice.h>
+#include <linux/regmap.h>
 #include <linux/spinlock.h>
 #include <linux/of_device.h>
 #include <linux/errno.h>
@@ -34,67 +36,16 @@
 #include "inv_mpu_iio.h"
 #include "inv_mpu_dts.h"
 
-#define INV_SPI_READ 0x80
-
-static int inv_spi_single_write(struct inv_mpu_state *st, u8 reg, u8 data)
-{
-	struct spi_message msg;
-	int res;
-	u8 d[2];
-	struct spi_transfer xfers = {
-		.tx_buf = d,
-		.bits_per_word = 8,
-		.len = 2,
-	};
-
-	pr_debug("reg_write: reg=0x%x data=0x%x\n", reg, data);
-	d[0] = reg;
-	d[1] = data;
-	spi_message_init(&msg);
-	spi_message_add_tail(&xfers, &msg);
-	res = spi_sync(to_spi_device(st->dev), &msg);
-
-	return res;
-}
-
-static int inv_spi_read(struct inv_mpu_state *st, u8 reg, int len, u8 *data)
-{
-	struct spi_message msg;
-	int res;
-	u8 d[1];
-	struct spi_transfer xfers[] = {
-		{
-		 .tx_buf = d,
-		 .bits_per_word = 8,
-		 .len = 1,
-		 },
-		{
-		 .rx_buf = data,
-		 .bits_per_word = 8,
-		 .len = len,
-		}
-	};
-
-	if (!data)
-		return -EINVAL;
-
-	d[0] = (reg | INV_SPI_READ);
-
-	spi_message_init(&msg);
-	spi_message_add_tail(&xfers[0], &msg);
-	spi_message_add_tail(&xfers[1], &msg);
-	res = spi_sync(to_spi_device(st->dev), &msg);
-
-	if (len == 1)
-		pr_debug("reg_read: reg=0x%x length=%d data=0x%x\n",
-							reg, len, data[0]);
-	else
-		pr_debug("reg_read: reg=0x%x length=%d d0=0x%x d1=0x%x\n",
-					reg, len, data[0], data[1]);
-
-	return res;
-
-}
+static const struct regmap_config inv_mpu_regmap_config = {
+	.name = "inv_mpu",
+	.reg_bits = 8,
+	.val_bits = 8,
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) && \
+    LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
+	/* icm42600 chips are not supporting SPI burst write, use single write instead */
+	.use_single_write = true,
+#endif
+};
 
 #if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
 	defined(CONFIG_INV_MPU_IIO_ICM20608D)
@@ -154,9 +105,19 @@ static int inv_spi_mem_read(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
 static int inv_mpu_probe(struct spi_device *spi)
 {
 	const struct spi_device_id *id = spi_get_device_id(spi);
+	enum inv_devices chip_type;
+	struct regmap *regmap;
 	struct inv_mpu_state *st;
 	struct iio_dev *indio_dev;
 	int result;
+
+	chip_type = (uintptr_t)device_get_match_data(&spi->dev);
+
+	regmap = devm_regmap_init_spi(spi, &inv_mpu_regmap_config);
+	if (IS_ERR(regmap)) {
+		result = PTR_ERR(regmap);
+		goto out_no_free;
+	}
 
 #if KERNEL_VERSION(5, 9, 0) > LINUX_VERSION_CODE
 	indio_dev = iio_device_alloc(sizeof(*st));
@@ -172,8 +133,7 @@ static int inv_mpu_probe(struct spi_device *spi)
 	iio_device_set_drvdata(indio_dev, indio_dev);
 	st = iio_priv(indio_dev);
 	mutex_init(&st->lock);
-	st->write = inv_spi_single_write;
-	st->read = inv_spi_read;
+	st->map = regmap;
 #if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
 	defined(CONFIG_INV_MPU_IIO_ICM20608D)
 	st->mem_write = inv_spi_mem_write;
@@ -220,7 +180,7 @@ static int inv_mpu_probe(struct spi_device *spi)
 	msleep(100);
 
 	/* power is turned on inside check chip type */
-	result = inv_check_chip_type(indio_dev, id->name);
+	result = inv_check_chip_type(indio_dev, chip_type);
 	if (result)
 		goto out_free;
 
@@ -256,11 +216,6 @@ static int inv_mpu_probe(struct spi_device *spi)
 	dev_info(st->dev, "%s ma-kernel-%s is ready to go!\n",
 		indio_dev->name, INVENSENSE_DRIVER_VERSION);
 
-#ifdef SENSOR_DATA_FROM_REGISTERS
-	pr_info("Data read from registers\n");
-#else
-	pr_info("Data read from FIFO\n");
-#endif
 #ifdef TIMER_BASED_BATCHING
 	pr_info("Timer based batching\n");
 #endif
@@ -351,50 +306,65 @@ static const struct dev_pm_ops inv_mpu_spi_pmops = {
  * supported by this driver
  */
 static const struct spi_device_id inv_mpu_id[] = {
-#ifdef CONFIG_INV_MPU_IIO_ICM20648
+#if defined(CONFIG_INV_MPU_IIO_ICM20648)
 	{"icm20648", ICM20648},
-#else
+#elif defined(CONFIG_INV_MPU_IIO_ICM20608D)
 	{"icm20608d", ICM20608D},
 	{"icm20609i", ICM20609I},
-	{"icm20690", ICM20690},
+#elif defined(CONFIG_INV_MPU_IIO_ICM20602)
 	{"icm20602", ICM20602},
+#elif defined(CONFIG_INV_MPU_IIO_ICM20690)
+	{"icm20690", ICM20690},
+#elif defined(CONFIG_INV_MPU_IIO_IAM20680)
 	{"iam20680", IAM20680},
+#elif defined(CONFIG_INV_MPU_IIO_ICM42600)
 	{"icm42600", ICM42600},
 	{"icm42686", ICM42686},
 	{"icm42688", ICM42688},
 	{"icm40609d", ICM40609D},
-	{"icm43600", ICM43600},
 	{"iim42600", ICM42600},
-	{"icm45600", ICM45600},
 	{"iim42653", ICM42686},
+#elif defined(CONFIG_INV_MPU_IIO_ICM43600)
+	{"icm43600", ICM43600},
+	{"icm53600", ICM53600},
+#elif defined(CONFIG_INV_MPU_IIO_ICM45600)
+	{"icm45600", ICM45600},
 #endif
 	{}
 };
 MODULE_DEVICE_TABLE(spi, inv_mpu_id);
 
 static const struct of_device_id inv_mpu_of_match[] = {
-#ifdef CONFIG_INV_MPU_IIO_ICM20648
+#if defined(CONFIG_INV_MPU_IIO_ICM20648)
 	{
 		.compatible = "invensense,icm20648",
 		.data = (void *)ICM20648,
 	},
-#else
+#elif defined(CONFIG_INV_MPU_IIO_ICM20608D)
 	{
 		.compatible = "invensense,icm20608d",
 		.data = (void *)ICM20608D,
 	}, {
 		.compatible = "invensense,icm20609i",
 		.data = (void *)ICM20609I,
-	}, {
-		.compatible = "invensense,icm20690",
-		.data = (void *)ICM20690,
-	}, {
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM20602)
+	{
 		.compatible = "invensense,icm20602",
 		.data = (void *)ICM20602,
-	}, {
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM20690)
+	{
+		.compatible = "invensense,icm20690",
+		.data = (void *)ICM20690,
+	},
+#elif defined(CONFIG_INV_MPU_IIO_IAM20680)
+	{
 		.compatible = "invensense,iam20680",
 		.data = (void *)IAM20680,
-	}, {
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM42600)
+	{
 		.compatible = "invensense,icm42600",
 		.data = (void *)ICM42600,
 	}, {
@@ -407,15 +377,22 @@ static const struct of_device_id inv_mpu_of_match[] = {
 		.compatible = "invensense,icm40609d",
 		.data = (void *)ICM40609D,
 	}, {
-		.compatible = "invensense,icm43600",
-		.data = (void *)ICM43600,
-	}, {
 		.compatible = "invensense,iim42600",
 		.data = (void *)ICM42600,
 	}, {
 		.compatible = "invensense,iim42653",
 		.data = (void *)ICM42686,
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM43600)
+	{
+		.compatible = "invensense,icm43600",
+		.data = (void *)ICM43600,
 	}, {
+		.compatible = "invensense,icm53600",
+		.data = (void *)ICM53600,
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM45600)
+	{
 		.compatible = "invensense,icm45600",
 		.data = (void *)ICM45600,
 	},

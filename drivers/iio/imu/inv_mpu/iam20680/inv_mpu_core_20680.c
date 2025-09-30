@@ -73,6 +73,24 @@ static const char sensor_l_info[][30] = {
 	"SENSOR_L_NUM_MAX",
 };
 
+int inv_iam20680_set_accel_config2(struct inv_mpu_state *st, unsigned int val)
+{
+	/* clear FIFO size bits */
+	val &= ~0xC0;
+
+	switch (st->chip_rev) {
+	case INV_IAM20680_VAR_HP:
+	case INV_IAM20680_VAR_HT:
+		/* set FIFO to maximum size */
+		val |= BIT_FIFO_SIZE_MAX;
+		break;
+	default:
+		break;
+	}
+
+	return inv_plat_single_write(st, REG_ACCEL_CONFIG_2, val);
+}
+
 static int inv_set_accel_bias_reg(struct inv_mpu_state *st,
 			int accel_bias, int axis)
 {
@@ -286,7 +304,7 @@ static int _misc_attr_store(struct device *dev,
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
-	int result, data;
+	int result, max, data;
 
 	result = inv_switch_power_in_lp(st, true);
 	if (result)
@@ -296,13 +314,14 @@ static int _misc_attr_store(struct device *dev,
 		return result;
 	switch (this_attr->address) {
 	case ATTR_GYRO_SCALE:
-		if (data > 3)
+		max = (st->chip_rev == INV_IAM20680_VAR_HV) ? 2 : 3;
+		if (data < 0 || data > max)
 			return -EINVAL;
 		st->chip_config.fsr = data;
 		result = inv_set_gyro_sf(st);
 		return result;
 	case ATTR_ACCEL_SCALE:
-		if (data > 3)
+		if (data < 0 || data > 3)
 			return -EINVAL;
 		st->chip_config.accel_fs = data;
 		result = inv_set_accel_sf(st);
@@ -455,12 +474,11 @@ static int _basic_attr_store(struct device *dev,
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
-	int data;
+	u64 data;
 	int result;
-	u32 power_on_data;
 
-	result = kstrtoint(buf, 10, &data);
-	if (result || (data < 0))
+	result = kstrtou64(buf, 10, &data);
+	if (result)
 		return -EINVAL;
 
 	switch (this_attr->address) {
@@ -491,51 +509,30 @@ static int _basic_attr_store(struct device *dev,
 		break;
 	case ATTR_IN_POWER_ON:
 		{
-			u8 p0[2];
-			u8 p1[2];
+			union {
+				u64 word;
+				u8 bytes[8];
+			} power_on_data;
+			bool read;
+			u8 reg;
+			size_t len;
 
-			power_on_data = (u32)data;
-			p0[0] = (power_on_data & 0xff);
-			p0[1] = ((power_on_data >> 8) & 0xff);
-			p1[0] = ((power_on_data >> 16) & 0xff);
-			p1[1] = ((power_on_data >> 24) & 0xff);
-
-			if (st->bus_type == BUS_SPI) {
-				struct spi_transfer power_on;
-				struct spi_message msg;
-
-				memset(&power_on, 0, sizeof(struct spi_transfer));
-
-				power_on.bits_per_word = 8;
-				power_on.len = 2;
-
-				power_on.tx_buf = p0;
-				power_on.rx_buf = p1;
-				spi_message_init(&msg);
-				spi_message_add_tail(&power_on, &msg);
-				spi_sync(to_spi_device(st->dev), &msg);
-
-			} else if (st->bus_type == BUS_I2C) {
-				struct i2c_msg msgs[2];
-
-				p0[0] &= 0x7f;
-
-				msgs[0].addr = st->i2c_addr;
-				msgs[0].flags = 0;	/* write */
-				msgs[0].buf = &p0[0];
-				msgs[0].len = 1;
-
-				msgs[1].addr = st->i2c_addr;
-				msgs[1].flags = I2C_M_RD;
-				msgs[1].buf = &p1[1];
-				msgs[1].len = 1;
-
-				result = i2c_transfer(st->sl_handle, msgs, 2);
-				if (result < 2)
-					return -EIO;
+			power_on_data.word = data;
+			read = power_on_data.bytes[0] & 0x80 ? true : false;
+			reg = power_on_data.bytes[0] & 0x7f;
+			len = power_on_data.bytes[1];
+			if (len > 6) {
+				pr_err("power_on length too high\n");
+				return -EINVAL;
 			}
-			st->power_on_data = ((p0[0] << 24) | (p0[1] << 16) |
-							(p1[0] << 8) | p1[1]);
+
+			if (read)
+				result = inv_plat_read(st, reg, len, &power_on_data.bytes[2]);
+			else
+				result = inv_plat_write(st, reg, len, &power_on_data.bytes[2]);
+			if (result)
+				return result;
+			st->power_on_data = power_on_data.word;
 			return count;
 		}
 	case ATTR_DMP_EIS_ENABLE:
@@ -625,7 +622,7 @@ static ssize_t inv_attr_show(struct device *dev,
 	case ATTR_ACCEL_ENABLE:
 		return snprintf(buf, MAX_WR_SZ, "%d\n", st->chip_config.accel_enable);
 	case ATTR_IN_POWER_ON:
-		return snprintf(buf, MAX_WR_SZ, "%d\n", st->power_on_data);
+		return snprintf(buf, MAX_WR_SZ, "%lld\n", st->power_on_data);
 	case ATTR_DMP_BATCHMODE_TIMEOUT:
 		return snprintf(buf, MAX_WR_SZ, "%d\n", st->batch.timeout);
 	case ATTR_DMP_PED_ON:
@@ -810,6 +807,28 @@ static unsigned int inv_convert_val_to_wom(unsigned int val)
 	return min(255U, max(1U, value));
 }
 
+static int inv_set_wom_threshold(struct inv_mpu_state *st, unsigned int val)
+{
+	u8 thresholds[3];
+	int result;
+
+	switch (st->chip_rev) {
+	case INV_IAM20680_VAR_HV:
+		/* 3 threshold registers */
+		thresholds[0] = val;
+		thresholds[1] = val;
+		thresholds[2] = val;
+		result = inv_plat_write(st, REG_ACCEL_WOM_X_THR, 3, thresholds);
+		break;
+	default:
+		/* unique threshold register */
+		result = inv_plat_single_write(st, REG_ACCEL_WOM_THR, val);
+		break;
+	}
+
+	return result;
+}
+
 static int inv_set_lp_odr(struct inv_mpu_state *st, unsigned int freq)
 {
 	static const unsigned int freqs[] = {500, 250, 125, 62, 31, 16, 8, 4};
@@ -837,7 +856,7 @@ static int inv_set_wom_lp(struct inv_mpu_state *st, bool on)
 	int result;
 
 	if (on) {
-		result = inv_plat_single_write(st, REG_20680_ACCEL_CONFIG2, 0x07);
+		result = inv_iam20680_set_accel_config2(st, 0x07);
 		if (result)
 			return result;
 
@@ -884,7 +903,7 @@ int inv_mpu_set_wom_lp(struct inv_mpu_state *st, bool en)
 			msleep(INV_IAM20680_ACCEL_START_TIME);
 		}
 
-		result = inv_plat_single_write(st, REG_ACCEL_WOM_THR, st->wom_thld);
+		result = inv_set_wom_threshold(st, st->wom_thld);
 		if (result)
 			return result;
 
@@ -893,7 +912,7 @@ int inv_mpu_set_wom_lp(struct inv_mpu_state *st, bool en)
 		if (result)
 			return result;
 
-		result = inv_plat_single_write(st, REG_INT_ENABLE, BIT_WOM_X_INT_EN | BIT_WOM_Y_INT_EN | BIT_WOM_X_INT_EN);
+		result = inv_plat_single_write(st, REG_INT_ENABLE, BIT_WOM_ALL_INT);
 		if (result)
 			return result;
 
@@ -1268,14 +1287,12 @@ static const struct iio_info mpu_info = {
 	.write_event_config =	inv_mpu_write_event_config,
 	.read_event_value =	inv_mpu_read_event_value,
 	.write_event_value =	inv_mpu_write_event_value,
-
-
 };
 
 /*
  *  inv_check_chip_type() - check and setup chip type.
  */
-int inv_check_chip_type(struct iio_dev *indio_dev, const char *name)
+int inv_check_chip_type(struct iio_dev *indio_dev, int chip_type)
 {
 	int result;
 	int t_ind;
@@ -1287,16 +1304,23 @@ int inv_check_chip_type(struct iio_dev *indio_dev, const char *name)
 	conf = &st->chip_config;
 	plat = &st->plat_data;
 
-	if (!strcmp(name, "iam20680"))
-		st->chip_type = IAM20680;
-	else
+	switch (chip_type) {
+	case IAM20680:
+		st->chip_type = chip_type;
+		break;
+	default:
 		return -EPERM;
+	}
 	st->chip_config.has_gyro = 1;
 
 	st->hw = &hw_info[st->chip_type];
 	result = inv_mpu_initialize(st);
 	if (result)
 		return result;
+
+	/* HV variant has no FIFO */
+	if (st->chip_rev == INV_IAM20680_VAR_HV)
+		st->no_fifo = true;
 
 	t_ind = 0;
 	memcpy(&inv_attributes[t_ind], inv_raw_attributes,

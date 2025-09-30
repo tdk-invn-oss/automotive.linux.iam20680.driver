@@ -324,8 +324,17 @@ int inv_set_accel_config2(struct inv_mpu_state *st, bool cycle_mode)
 	u8 v;
 
 	v = 0;
-#ifdef CONFIG_INV_MPU_IIO_ICM20690
+#if defined(CONFIG_INV_MPU_IIO_ICM20690)
 	v |= BIT_FIFO_SIZE_1K;
+#elif defined(CONFIG_INV_MPU_IIO_IAM20680)
+	switch (st->chip_rev) {
+	case INV_IAM20680_VAR_HP:
+	case INV_IAM20680_VAR_HT:
+		v |= BIT_FIFO_SIZE_MAX;
+		break;
+	default:
+		break;
+	}
 #endif
 	if (cycle_mode) {
 		rate = (st->eng_info[ENGINE_ACCEL].running_rate << 1);

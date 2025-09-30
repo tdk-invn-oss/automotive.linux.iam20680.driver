@@ -55,12 +55,18 @@ static int inv_read_timebase(struct inv_mpu_state *st)
 
 int inv_set_gyro_sf(struct inv_mpu_state *st)
 {
-	int result;
+	unsigned int fsr;
 
-	result = inv_plat_single_write(st, REG_GYRO_CONFIG,
-				   st->chip_config.fsr << SHIFT_GYRO_FS_SEL);
+	switch (st->chip_rev) {
+	case INV_IAM20680_VAR_HV:
+		fsr = st->chip_config.fsr + 1;
+		break;
+	default:
+		fsr = st->chip_config.fsr;
+		break;
+	}
 
-	return result;
+	return inv_plat_single_write(st, REG_GYRO_CONFIG, fsr << SHIFT_GYRO_FS_SEL);
 }
 
 int inv_set_accel_sf(struct inv_mpu_state *st)
@@ -165,7 +171,14 @@ static int inv_init_config(struct inv_mpu_state *st)
 	int res, i;
 
 	st->batch.overflow_on = 0;
-	st->chip_config.fsr = MPU_INIT_GYRO_SCALE;
+	switch (st->chip_rev) {
+	case INV_IAM20680_VAR_HV:
+		st->chip_config.fsr = 2;
+		break;
+	default:
+		st->chip_config.fsr = MPU_INIT_GYRO_SCALE;
+		break;
+	}
 	st->chip_config.accel_fs = MPU_INIT_ACCEL_SCALE;
 	st->ped.int_thresh = MPU_INIT_PED_INT_THRESH;
 	st->ped.step_thresh = MPU_INIT_PED_STEP_THRESH;
@@ -257,6 +270,30 @@ int inv_mpu_initialize(struct inv_mpu_state *st)
 	pr_info("whoami= %x\n", v);
 	if (v == 0x00 || v == 0xff)
 		return -ENODEV;
+
+	/* set chip variant */
+	switch (v) {
+	case 0xFE:
+		st->chip_rev = INV_IAM20680_VAR_HV;
+		dev_info(st->dev, "IAM-20680HV detected\n");
+		break;
+	case 0xFA:
+		st->chip_rev = INV_IAM20680_VAR_HT;
+		dev_info(st->dev, "IAM-20680HT detected\n");
+		break;
+	case 0xF8:
+		st->chip_rev = INV_IAM20680_VAR_HP;
+		dev_info(st->dev, "IAM-20680HP detected\n");
+		break;
+	case 0xA9:
+		st->chip_rev = INV_IAM20680_NO_VAR;
+		dev_info(st->dev, "IAM-20680 detected\n");
+		break;
+	default:
+		dev_warn(st->dev, "unknown chip using by default IAM-20680\n");
+		st->chip_rev = INV_IAM20680_NO_VAR;
+		break;
+	};
 
 	/* toggle power state */
 	result = inv_set_power(st, false);

@@ -103,40 +103,13 @@ static int inv_push_20680_data(struct iio_dev *indio_dev, u8 *d)
 	return 0;
 }
 
-static int inv_process_20680_data(struct iio_dev *indio_dev)
+static int inv_read_data_from_registers(struct inv_mpu_state *st, u8 *data)
 {
-	struct inv_mpu_state *st = iio_priv(indio_dev);
-	int total_bytes, tmp, res, fifo_count, pk_size, i;
-	u8 *dptr, *d;
-	bool done_flag;
-#ifdef SENSOR_DATA_FROM_REGISTERS
-	u8 reg;
-	int len;
-#endif
+	unsigned int reg;
+	size_t len;
+	u8 *temp_data, *gyro_data;
+	int ret;
 
-	fifo_count = inv_get_last_run_time_non_dmp_record_mode(st);
-	pr_debug("fifc= %d\n", fifo_count);
-	if (!fifo_count) {
-		pr_debug("REG_FIFO_COUNT_H size is 0\n");
-		return 0;
-	}
-	pk_size = st->batch.pk_size;
-	if (!pk_size)
-		return -EINVAL;
-
-	if (fifo_count >= (HARDWARE_FIFO_SIZE / st->batch.pk_size)) {
-		pr_warn("fifo overflow pkt count=%d pkt sz=%d\n",
-				fifo_count, st->batch.pk_size);
-		return -EOVERFLOW;
-	}
-
-	fifo_count *= st->batch.pk_size;
-	st->fifo_count = fifo_count;
-	d = st->fifo_data_store;
-	dptr = d;
-	total_bytes = fifo_count;
-
-#ifdef SENSOR_DATA_FROM_REGISTERS
 	len = 0;
 	if (st->sensor[SENSOR_GYRO].on) {
 		reg = REG_RAW_GYRO;
@@ -152,63 +125,87 @@ static int inv_process_20680_data(struct iio_dev *indio_dev)
 		reg = REG_RAW_ACCEL;
 		len += BYTES_PER_SENSOR;
 	}
-
-	if (len == 0) {
-		pr_debug("No sensor is enabled\n");
+	if (len == 0)
 		return 0;
-	}
 
 	/* read data registers */
-	res = inv_plat_read(st, reg, len, data);
-	if (res < 0) {
-		pr_err("read data registers is failed\n");
-		return res;
+	ret = inv_plat_read(st, reg, len, data);
+	if (ret)
+		return ret;
+
+	/* if accel and gyro are on without temp, gyro data has to be moved over temp data */
+	if (st->sensor[SENSOR_ACCEL].on && st->sensor[SENSOR_GYRO].on &&
+	    !st->sensor[SENSOR_TEMP].on) {
+		temp_data = &data[BYTES_PER_SENSOR];
+		gyro_data = &data[BYTES_PER_SENSOR + BYTES_FOR_TEMP];
+		memmove(temp_data, gyro_data, BYTES_PER_SENSOR);
 	}
 
-	/* copy sensor data to buffer as FIFO data format */
-	tmp = 0;
-	if (st->sensor[SENSOR_ACCEL].on) {
-		for (i = 0; i < BYTES_PER_SENSOR; i++)
-			dptr[i] = data[tmp + i];
-		dptr += BYTES_PER_SENSOR;
-		tmp += BYTES_PER_SENSOR;
+	return 0;
+}
+
+static int inv_process_20680_data(struct iio_dev *indio_dev)
+{
+	struct inv_mpu_state *st = iio_priv(indio_dev);
+	int total_bytes, tmp, res, fifo_count, pk_size, i;
+	u8 *dptr, *d;
+	bool done_flag;
+	size_t fifo_size;
+
+	fifo_count = inv_get_last_run_time_non_dmp_record_mode(st);
+	pr_debug("fifc= %d\n", fifo_count);
+	if (!fifo_count) {
+		pr_debug("REG_FIFO_COUNT_H size is 0\n");
+		return 0;
+	}
+	pk_size = st->batch.pk_size;
+	if (!pk_size)
+		return -EINVAL;
+
+	if (st->chip_rev == INV_IAM20680_NO_VAR)
+		fifo_size = NO_VAR_FIFO_SIZE;
+	else
+		fifo_size = HARDWARE_FIFO_SIZE;
+	if (fifo_count >= (fifo_size / st->batch.pk_size)) {
+		pr_warn("fifo overflow pkt count=%d pkt sz=%d\n",
+				fifo_count, st->batch.pk_size);
+		return -EOVERFLOW;
 	}
 
-	if (st->sensor[SENSOR_TEMP].on) {
-		for (i = 0; i < BYTES_FOR_TEMP; i++)
-			dptr[i] = data[tmp + i];
-		dptr += BYTES_FOR_TEMP;
-		tmp += BYTES_FOR_TEMP;
-	}
+	fifo_count *= st->batch.pk_size;
+	st->fifo_count = fifo_count;
+	d = st->fifo_data_store;
+	dptr = d;
+	total_bytes = fifo_count;
 
-	if (st->sensor[SENSOR_GYRO].on) {
-		if (st->sensor[SENSOR_ACCEL].on && !st->sensor[SENSOR_TEMP].on)
-			tmp += BYTES_FOR_TEMP;
-		for (i = 0; i < BYTES_PER_SENSOR; i++)
-			dptr[i] = data[tmp + i];
-	}
-#else
-	while (total_bytes > 0) {
-		if (total_bytes < pk_size * MAX_FIFO_PACKET_READ)
-			tmp = total_bytes;
-		else
-			tmp = pk_size * MAX_FIFO_PACKET_READ;
-		res = inv_plat_read(st, REG_FIFO_R_W, tmp, dptr);
-		if (res < 0) {
-			pr_err("read REG_FIFO_R_W is failed\n");
+	if (st->no_fifo) {
+		res = inv_read_data_from_registers(st, dptr);
+		if (res) {
+			pr_err("read data registers failed\n");
 			return res;
 		}
-		pr_debug("inside: %x, %x, %x, %x, %x, %x, %x, %x\n",
-				dptr[0], dptr[1], dptr[2], dptr[3],
-				dptr[4], dptr[5], dptr[6], dptr[7]);
-		pr_debug("insid2: %x, %x, %x, %x, %x, %x, %x, %x\n",
-				dptr[8], dptr[9], dptr[10], dptr[11],
-				dptr[12], dptr[13], dptr[14], dptr[15]);
-
-		dptr += tmp;
-		total_bytes -= tmp;
+	} else {
+		while (total_bytes > 0) {
+			if (total_bytes < pk_size * MAX_FIFO_PACKET_READ)
+				tmp = total_bytes;
+			else
+				tmp = pk_size * MAX_FIFO_PACKET_READ;
+			res = inv_plat_read(st, REG_FIFO_R_W, tmp, dptr);
+			if (res < 0) {
+				pr_err("read REG_FIFO_R_W is failed\n");
+				return res;
+			}
+			pr_debug("inside: %x, %x, %x, %x, %x, %x, %x, %x\n",
+					dptr[0], dptr[1], dptr[2], dptr[3],
+					dptr[4], dptr[5], dptr[6], dptr[7]);
+			pr_debug("insid2: %x, %x, %x, %x, %x, %x, %x, %x\n",
+					dptr[8], dptr[9], dptr[10], dptr[11],
+					dptr[12], dptr[13], dptr[14], dptr[15]);
+			dptr += tmp;
+			total_bytes -= tmp;
+		}
 	}
-#endif /* SENSOR_DATA_FROM_REGISTERS */
+
 	dptr = d;
 	pr_debug("dd: %x, %x, %x, %x, %x, %x, %x, %x\n",
 			d[0], d[1], d[2], d[3],
@@ -362,11 +359,15 @@ int inv_flush_batch_data(struct iio_dev *indio_dev, int data)
 {
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 
-#ifndef SENSOR_DATA_FROM_REGISTERS
+	if (st->no_fifo) {
+		inv_push_marker_to_buffer(indio_dev, END_MARKER, data);
+		return 0;
+	}
+
 	if (st->chip_config.gyro_enable ||
-		st->chip_config.accel_enable ||
-		st->chip_config.slave_enable ||
-		st->chip_config.pressure_enable) {
+	    st->chip_config.accel_enable ||
+	    st->chip_config.slave_enable ||
+	    st->chip_config.pressure_enable) {
 		st->wake_sensor_received = false;
 		inv_process_20680_data(indio_dev);
 		if (st->wake_sensor_received)
@@ -377,7 +378,6 @@ int inv_flush_batch_data(struct iio_dev *indio_dev, int data)
 #endif
 		inv_switch_power_in_lp(st, false);
 	}
-#endif /* SENSOR_DATA_FROM_REGISTERS */
 	inv_push_marker_to_buffer(indio_dev, END_MARKER, data);
 
 	return 0;

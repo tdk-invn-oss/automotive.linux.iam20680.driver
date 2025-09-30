@@ -21,16 +21,8 @@
  */
 // #define SUPPORT_ONLY_BASIC_FEATURES
 
-/* Uncomment to read data registers for sensor data instead of FIFO */
-//#define SENSOR_DATA_FROM_REGISTERS
-
 /* Uncomment to enable timer based batching */
 #define TIMER_BASED_BATCHING
-
-/* Polling (batch mode) can be enabled only when FIFO read */
-#if defined(SENSOR_DATA_FROM_REGISTERS)
-#undef TIMER_BASED_BATCHING
-#endif
 
 /*register and associated bit definition*/
 #define REG_XA_OFFS_H		0x77
@@ -59,10 +51,8 @@
 #define REG_ACCEL_WOM_Y_THR	0x21
 #define REG_ACCEL_WOM_Z_THR	0x22
 
-#define REG_ACCEL_MOT_THR	0x1F
-#define REG_ACCEL_MOT_DUR	0x20
-
 #define REG_ACCEL_CONFIG_2	0x1D
+#define BIT_FIFO_SIZE_MAX	0xC0
 #define BIT_ACCEL_FCHOCIE_B	0x08
 
 #define REG_FIFO_EN		0x23
@@ -132,14 +122,8 @@
 #define REG_20680_XA_OFFS_H	0x77
 #define REG_20680_YA_OFFS_H	0x7A
 #define REG_20680_ZA_OFFS_H	0x7D
-#define REG_20680_ACCEL_CONFIG2	0x1D
-#define BIT_ACCEL_FCHOCIE_B	0x08
-#define BIT_FIFO_SIZE_1K	0x40
 
 #define REG_LP_MODE_CFG		0x1E
-
-#define REG_20680_LP_ACCEL_ODR	0x1E
-#define REG_20680_ACCEL_WOM_THR	0x1F
 
 /* data output control reg 2 */
 #define ACCEL_ACCURACY_SET	0x4000
@@ -151,8 +135,8 @@
 #define BYTES_PER_SENSOR	6
 #define BYTES_FOR_TEMP		2
 #define FIFO_COUNT_BYTE		2
-#define HARDWARE_FIFO_SIZE	512
-#define FIFO_SIZE		(HARDWARE_FIFO_SIZE * 7 / 10)
+#define NO_VAR_FIFO_SIZE	512
+#define HARDWARE_FIFO_SIZE	(4 * 1024)
 #define POWER_UP_TIME		100
 #define REG_UP_TIME_USEC	100
 #define LEFT_OVER_BYTES		128
@@ -182,6 +166,13 @@ enum INV_SENSORS {
 	SENSOR_COMPASS,
 	SENSOR_NUM_MAX,
 	SENSOR_INVALID,
+};
+
+enum inv_iam20680_variant {
+	INV_IAM20680_NO_VAR,
+	INV_IAM20680_VAR_HP,
+	INV_IAM20680_VAR_HT,
+	INV_IAM20680_VAR_HV,
 };
 
 enum inv_filter_e {
@@ -214,7 +205,6 @@ enum inv_lposc_e {
 #define GESTURE_ACCEL_RATE	50
 #define ESI_GYRO_RATE		1000
 #define MAX_FIFO_PACKET_READ	6
-#define MAX_BATCH_FIFO_SIZE	FIFO_SIZE
 
 #define MIN_MST_ODR_CONFIG	4
 #define MAX_MST_ODR_CONFIG	5
@@ -239,5 +229,9 @@ enum inv_lposc_e {
 
 #define MAX_MPU_MEM		8192
 #define MAX_PRS_RATE		281
+
+struct inv_mpu_state;
+
+int inv_iam20680_set_accel_config2(struct inv_mpu_state *st, unsigned int val);
 
 #endif

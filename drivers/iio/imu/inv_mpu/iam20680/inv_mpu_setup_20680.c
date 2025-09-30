@@ -27,24 +27,20 @@ static int inv_calc_engine_dur(struct inv_engine_info *ei)
 	return 0;
 }
 
-static int inv_turn_on_fifo(struct inv_mpu_state *st)
+static int inv_turn_on_interrupt(struct inv_mpu_state *st)
 {
-	u8 int_en, fifo_en, mode, user;
-	int r;
+	unsigned int int_en, mode;
+	int ret;
 
-	r = inv_plat_single_write(st, REG_FIFO_EN, 0);
-	if (r)
-		return r;
-	r = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_RST | st->i2c_dis);
-	if (r)
-		return r;
-	fifo_en = 0;
+	if (st->gesture_only_on && !st->batch.timeout)
+		mode = BIT_ACCEL_INTEL_EN | BIT_ACCEL_INTEL_MODE;
+	else
+		mode = 0;
+	ret = inv_plat_single_write(st, REG_ACCEL_INTEL_CTRL, mode);
+	if (ret)
+		return ret;
+
 	int_en = 0;
-
-	if (st->gesture_only_on && (!st->batch.timeout)) {
-		st->gesture_int_count = WOM_DELAY_THRESHOLD;
-		int_en |= BIT_WOM_ALL_INT_EN;
-	}
 #ifdef TIMER_BASED_BATCHING
 	if (st->chip_config.eis_enable)
 		int_en |= BIT_FSYNC_INT_EN;
@@ -60,29 +56,43 @@ static int inv_turn_on_fifo(struct inv_mpu_state *st)
 			int_en |= BIT_FSYNC_INT_EN;
 	}
 #endif
+	if (st->gesture_only_on && (!st->batch.timeout)) {
+		st->gesture_int_count = WOM_DELAY_THRESHOLD;
+		int_en |= BIT_WOM_ALL_INT_EN;
+	}
+
+	st->int_en = int_en;
+	return inv_plat_single_write(st, REG_INT_ENABLE, int_en);
+}
+
+static int inv_turn_on_fifo(struct inv_mpu_state *st)
+{
+	u8 fifo_en;
+	int r;
+
+	if (st->no_fifo)
+		return 0;
+
+	r = inv_plat_single_write(st, REG_FIFO_EN, 0);
+	if (r)
+		return r;
+	r = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_RST | st->i2c_dis);
+	if (r)
+		return r;
+
+	fifo_en = 0;
 	if (st->sensor[SENSOR_GYRO].on)
 		fifo_en |= BITS_GYRO_FIFO_EN;
-
 	if (st->sensor[SENSOR_ACCEL].on)
 		fifo_en |= BIT_ACCEL_FIFO_EN;
 	r = inv_plat_single_write(st, REG_FIFO_EN, fifo_en);
 	if (r)
 		return r;
-	st->int_en = int_en;
-	r = inv_plat_single_write(st, REG_INT_ENABLE, int_en);
+
+	r = inv_plat_single_write(st, REG_USER_CTRL, BIT_FIFO_EN | st->i2c_dis);
 	if (r)
 		return r;
-	if (st->gesture_only_on && (!st->batch.timeout))
-		mode = BIT_ACCEL_INTEL_EN | BIT_ACCEL_INTEL_MODE;
-	else
-		mode = 0;
-	r = inv_plat_single_write(st, REG_ACCEL_INTEL_CTRL, mode);
-#ifdef SENSOR_DATA_FROM_REGISTERS
-	user = 0;
-#else
-	user = BIT_FIFO_EN;
-#endif
-	r = inv_plat_single_write(st, REG_USER_CTRL, user | st->i2c_dis);
+
 #ifdef TIMER_BASED_BATCHING
 	if (fifo_en && st->batch_timeout) {
 		if (st->is_batch_timer_running)
@@ -97,7 +107,7 @@ static int inv_turn_on_fifo(struct inv_mpu_state *st)
 	}
 #endif
 
-	return r;
+	return 0;
 }
 
 /*
@@ -110,6 +120,9 @@ int inv_reset_fifo(struct inv_mpu_state *st, bool turn_off)
 	int dur_ms;
 
 	r = inv_turn_on_fifo(st);
+	if (r)
+		return r;
+	r = inv_turn_on_interrupt(st);
 	if (r)
 		return r;
 
@@ -269,13 +282,29 @@ static int inv_set_batch(struct inv_mpu_state *st)
 {
 #ifdef TIMER_BASED_BATCHING
 	u64 timeout;
-	int required_fifo_size;
+	size_t max_batch_size;
+	size_t required_fifo_size;
+#endif
+
+	if (st->no_fifo) {
+		st->batch_timeout = 0;
+		st->batch.fifo_wm_th = 0;
+		return 0;
+	}
+
+#ifdef TIMER_BASED_BATCHING
+	if (st->chip_rev == INV_IAM20680_NO_VAR)
+		max_batch_size = NO_VAR_FIFO_SIZE;
+	else
+		max_batch_size = HARDWARE_FIFO_SIZE;
+	/* let 7/10 space inside for FIFO for system processing */
+	max_batch_size = (max_batch_size * 7) / 10;
 
 	if (st->batch.timeout) {
 		required_fifo_size = st->batch.timeout * st->eng_info[ENGINE_GYRO].running_rate
 					* st->batch.pk_size / 1000;
-		if (required_fifo_size > MAX_BATCH_FIFO_SIZE) {
-			required_fifo_size = MAX_BATCH_FIFO_SIZE;
+		if (required_fifo_size > max_batch_size) {
+			required_fifo_size = max_batch_size;
 			timeout = (required_fifo_size / st->batch.pk_size) * (1000 / st->eng_info[ENGINE_GYRO].running_rate);
 		} else {
 			timeout = st->batch.timeout;

@@ -25,6 +25,7 @@
 #include <linux/interrupt.h>
 #include <linux/kfifo.h>
 #include <linux/poll.h>
+#include <linux/limits.h>
 #include <linux/miscdevice.h>
 #include <linux/spinlock.h>
 #include <linux/of_device.h>
@@ -36,90 +37,11 @@
 
 #define CONFIG_DYNAMIC_DEBUG_I2C 0
 
-/**
- *  inv_i2c_read_base() - Read one or more bytes from the device registers.
- *  @st:	Device driver instance.
- *  @i2c_addr:  i2c address of device.
- *  @reg:	First device register to be read from.
- *  @length:	Number of bytes to read.
- *  @data:	Data read from device.
- *  NOTE:This is not re-implementation of i2c_smbus_read because i2c
- *       address could be specified in this case. We could have two different
- *       i2c address due to secondary i2c interface.
- */
-int inv_i2c_read_base(struct inv_mpu_state *st, u16 i2c_addr,
-						u8 reg, u16 length, u8 *data)
-{
-	struct i2c_msg msgs[2];
-	int res;
-
-	if (!data)
-		return -EINVAL;
-
-	msgs[0].addr = i2c_addr;
-	msgs[0].flags = 0;	/* write */
-	msgs[0].buf = &reg;
-	msgs[0].len = 1;
-
-	msgs[1].addr = i2c_addr;
-	msgs[1].flags = I2C_M_RD;
-	msgs[1].buf = data;
-	msgs[1].len = length;
-
-	res = i2c_transfer(st->sl_handle, msgs, 2);
-
-	if (res < 2) {
-		if (res >= 0)
-			res = -EIO;
-	} else
-		res = 0;
-
-	return res;
-}
-
-/**
- *  inv_i2c_single_write_base() - Write a byte to a device register.
- *  @st:	Device driver instance.
- *  @i2c_addr:  I2C address of the device.
- *  @reg:	Device register to be written to.
- *  @data:	Byte to write to device.
- *  NOTE:This is not re-implementation of i2c_smbus_write because i2c
- *       address could be specified in this case. We could have two different
- *       i2c address due to secondary i2c interface.
- */
-int inv_i2c_single_write_base(struct inv_mpu_state *st,
-						u16 i2c_addr, u8 reg, u8 data)
-{
-	u8 tmp[2];
-	struct i2c_msg msg;
-	int res;
-
-	tmp[0] = reg;
-	tmp[1] = data;
-
-	msg.addr = i2c_addr;
-	msg.flags = 0;		/* write */
-	msg.buf = tmp;
-	msg.len = 2;
-
-	res = i2c_transfer(st->sl_handle, &msg, 1);
-	if (res < 1) {
-		if (res == 0)
-			res = -EIO;
-		return res;
-	} else
-		return 0;
-}
-
-static int inv_i2c_single_write(struct inv_mpu_state *st, u8 reg, u8 data)
-{
-	return inv_i2c_single_write_base(st, st->i2c_addr, reg, data);
-}
-
-static int inv_i2c_read(struct inv_mpu_state *st, u8 reg, int len, u8 *data)
-{
-	return inv_i2c_read_base(st, st->i2c_addr, reg, len, data);
-}
+static const struct regmap_config inv_mpu_regmap_config = {
+	.name = "inv_mpu",
+	.reg_bits = 8,
+	.val_bits = 8,
+};
 
 #if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
 	defined(CONFIG_INV_MPU_IIO_ICM20608D)
@@ -291,6 +213,8 @@ static int inv_mpu_probe(struct i2c_client *client)
 {
 	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 #endif
+	enum inv_devices chip_type;
+	struct regmap *regmap;
 	struct inv_mpu_state *st;
 	struct iio_dev *indio_dev;
 	int result;
@@ -298,6 +222,14 @@ static int inv_mpu_probe(struct i2c_client *client)
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		result = -EIO;
 		pr_err("I2c function error\n");
+		goto out_no_free;
+	}
+
+	chip_type = (uintptr_t)device_get_match_data(&client->dev);
+
+	regmap = devm_regmap_init_i2c(client, &inv_mpu_regmap_config);
+	if (IS_ERR(regmap)) {
+		result = PTR_ERR(regmap);
 		goto out_no_free;
 	}
 
@@ -318,8 +250,7 @@ static int inv_mpu_probe(struct i2c_client *client)
 	st->client = client;
 	st->sl_handle = client->adapter;
 	st->i2c_addr = client->addr;
-	st->write = inv_i2c_single_write;
-	st->read = inv_i2c_read;
+	st->map = regmap;
 #if defined(CONFIG_INV_MPU_IIO_ICM20648) || \
 	defined(CONFIG_INV_MPU_IIO_ICM20608D)
 	st->mem_write = inv_i2c_mem_write;
@@ -360,7 +291,7 @@ static int inv_mpu_probe(struct i2c_client *client)
 	msleep(100);
 
 	/* power is turned on inside check chip type */
-	result = inv_check_chip_type(indio_dev, id->name);
+	result = inv_check_chip_type(indio_dev, chip_type);
 	if (result)
 		goto out_free;
 
@@ -396,11 +327,6 @@ static int inv_mpu_probe(struct i2c_client *client)
 	dev_info(st->dev, "%s ma-kernel-%s is ready to go!\n",
 				indio_dev->name, INVENSENSE_DRIVER_VERSION);
 
-#ifdef SENSOR_DATA_FROM_REGISTERS
-	pr_info("Data read from registers\n");
-#else
-	pr_info("Data read from FIFO\n");
-#endif
 #ifdef TIMER_BASED_BATCHING
 	pr_info("Timer based batching\n");
 #endif
@@ -493,35 +419,42 @@ static const struct dev_pm_ops inv_mpu_i2c_pmops = {
  * supported by this driver
  */
 static const struct i2c_device_id inv_mpu_id[] = {
-#ifdef CONFIG_INV_MPU_IIO_ICM20648
+#if defined(CONFIG_INV_MPU_IIO_ICM20648)
 	{"icm20648", ICM20648},
-#else
+#elif defined(CONFIG_INV_MPU_IIO_ICM20608D)
 	{"icm20608d", ICM20608D},
 	{"icm20609i", ICM20609I},
 	{"icm20789", ICM20789},
-	{"icm20690", ICM20690},
+#elif defined(CONFIG_INV_MPU_IIO_ICM20602)
 	{"icm20602", ICM20602},
+#elif defined(CONFIG_INV_MPU_IIO_ICM20690)
+	{"icm20690", ICM20690},
+#elif defined(CONFIG_INV_MPU_IIO_IAM20680)
 	{"iam20680", IAM20680},
+#elif defined(CONFIG_INV_MPU_IIO_ICM42600)
 	{"icm42600", ICM42600},
 	{"icm42686", ICM42686},
 	{"icm42688", ICM42688},
 	{"icm40609d", ICM40609D},
-	{"icm43600", ICM43600},
 	{"iim42600", ICM42600},
-	{"icm45600", ICM45600},
 	{"iim42653", ICM42686},
+#elif defined(CONFIG_INV_MPU_IIO_ICM43600)
+	{"icm43600", ICM43600},
+	{"icm53600", ICM53600},
+#elif defined(CONFIG_INV_MPU_IIO_ICM45600)
+	{"icm45600", ICM45600},
 #endif
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, inv_mpu_id);
 
 static const struct of_device_id inv_mpu_of_match[] = {
-#ifdef CONFIG_INV_MPU_IIO_ICM20648
+#if defined(CONFIG_INV_MPU_IIO_ICM20648)
 	{
 		.compatible = "invensense,icm20648",
 		.data = (void *)ICM20648,
 	},
-#else
+#elif defined(CONFIG_INV_MPU_IIO_ICM20608D)
 	{
 		.compatible = "invensense,icm20608d",
 		.data = (void *)ICM20608D,
@@ -531,16 +464,24 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	}, {
 		.compatible = "invensense,icm20789",
 		.data = (void *)ICM20789,
-	}, {
-		.compatible = "invensense,icm20690",
-		.data = (void *)ICM20690,
-	}, {
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM20602)
+	{
 		.compatible = "invensense,icm20602",
 		.data = (void *)ICM20602,
-	}, {
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM20690)
+	{
+		.compatible = "invensense,icm20690",
+		.data = (void *)ICM20690,
+	},
+#elif defined(CONFIG_INV_MPU_IIO_IAM20680)
+	{
 		.compatible = "invensense,iam20680",
 		.data = (void *)IAM20680,
-	}, {
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM42600)
+	{
 		.compatible = "invensense,icm42600",
 		.data = (void *)ICM42600,
 	}, {
@@ -553,15 +494,22 @@ static const struct of_device_id inv_mpu_of_match[] = {
 		.compatible = "invensense,icm40609d",
 		.data = (void *)ICM40609D,
 	}, {
-		.compatible = "invensense,icm43600",
-		.data = (void *)ICM43600,
-	}, {
 		.compatible = "invensense,iim42600",
 		.data = (void *)ICM42600,
 	}, {
 		.compatible = "invensense,iim42653",
 		.data = (void *)ICM42686,
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM43600)
+	{
+		.compatible = "invensense,icm43600",
+		.data = (void *)ICM43600,
 	}, {
+		.compatible = "invensense,icm53600",
+		.data = (void *)ICM53600,
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM45600)
+	{
 		.compatible = "invensense,icm45600",
 		.data = (void *)ICM45600,
 	},

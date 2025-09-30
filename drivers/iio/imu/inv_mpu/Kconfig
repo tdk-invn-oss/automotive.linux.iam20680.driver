@@ -96,6 +96,7 @@ config INV_MPU_IIO_I2C
 	tristate "Invensense ICM20xxx devices (I2C)"
 	depends on I2C && !INV_MPU6050_IIO
 	select INV_MPU_IIO
+	select REGMAP_I2C
 	help
 	  This driver supports Invensense ICM20xxx devices over I2C.
 	  This driver can be built as a module.
@@ -106,6 +107,7 @@ config INV_MPU_IIO_SPI
 	tristate "Invensense ICM20xxx devices (SPI)"
 	depends on SPI_MASTER && !INV_MPU6050_IIO
 	select INV_MPU_IIO
+	select REGMAP_SPI
 	help
 	  This driver supports Invensense ICM20xxx devices over SPI.
 	  This driver can be built as a module.

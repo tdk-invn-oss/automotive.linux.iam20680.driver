@@ -126,28 +126,23 @@ static int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 int inv_get_last_run_time_non_dmp_record_mode(struct inv_mpu_state *st)
 {
 	int fifo_count;
-#ifndef SENSOR_DATA_FROM_REGISTERS
 	int res;
-	u8 data[2];
-#endif
+	__be16 data;
 
 	st->ts_algo.last_run_time = get_time_ns();
-#ifndef SENSOR_DATA_FROM_REGISTERS
-	res = inv_plat_read(st, REG_FIFO_COUNT_H, FIFO_COUNT_BYTE, data);
-	if (res) {
-		pr_info("read REG_FIFO_COUNT_H failed= %d\n", res);
-		return 0;
+	if (st->no_fifo) {
+		if (st->fifo_count_mode == BYTE_MODE)
+			fifo_count = st->batch.pk_size;
+		else
+			fifo_count = 1;
+	} else {
+		res = inv_plat_read(st, REG_FIFO_COUNT_H, FIFO_COUNT_BYTE, (u8 *)&data);
+		if (res) {
+			pr_info("read REG_FIFO_COUNT_H failed= %d\n", res);
+			return 0;
+		}
+		fifo_count = be16_to_cpu(data);
 	}
-#endif
-
-#ifdef SENSOR_DATA_FROM_REGISTERS
-	if (st->fifo_count_mode == BYTE_MODE)
-		fifo_count = st->batch.pk_size;
-	else
-		fifo_count = 1;
-#else
-	fifo_count = be16_to_cpup((__be16 *) (data));
-#endif
 	pr_debug("fifc=%d\n", fifo_count);
 	if (!fifo_count)
 		return 0;
@@ -219,7 +214,7 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
  */
 int inv_bound_timestamp(struct inv_mpu_state *st)
 {
-	s64 elaps_time;
+	s64 elaps_time, limit;
 	int i;
 	struct inv_timestamp_algo *ts_algo = &st->ts_algo;
 
@@ -230,7 +225,10 @@ int inv_bound_timestamp(struct inv_mpu_state *st)
 		if (st->sensor[i].count > 0) {
 			elaps_time = (s64)(st->sensor[i].dur) *
 				     (s64)(st->sensor[i].count + 1);
+			limit = ts_algo->reset_ts - (s64)st->sensor[i].dur;
 			st->sensor[i].ts = ts_algo->last_run_time - elaps_time;
+			if (st->sensor[i].ts < limit)
+				st->sensor[i].ts = limit;
 			st->sensor[i].previous_ts = st->sensor[i].ts;
 			pr_debug("bound ts=%lld\n", st->sensor[i].ts);
 		}

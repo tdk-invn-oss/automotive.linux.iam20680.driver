@@ -22,13 +22,20 @@
 #include <linux/delay.h>
 #include <linux/iio/imu/mpu.h>
 #include <linux/interrupt.h>
+#include <linux/regmap.h>
 #include <linux/semaphore.h>
 #ifdef CONFIG_HAS_WAKELOCK
 #include <linux/wakelock.h>
 #else
 #include <linux/pm_wakeup.h>
 #endif
+#include <linux/version.h>
 #include <linux/wait.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
+#include <asm/unaligned.h>
+#else
+#include <linux/unaligned.h>
+#endif
 
 #include <linux/iio/iio.h>
 #include <linux/iio/buffer.h>
@@ -61,7 +68,7 @@
 #include "icm45600/inv_mpu_iio_reg_45600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"10.4.0"
+#define INVENSENSE_DRIVER_VERSION		"10.7.1"
 
 /* #define DEBUG */
 
@@ -142,20 +149,27 @@
 #define ACCEL_COVARIANCE_SIZE  (COVARIANCE_SIZE * sizeof(int))
 
 enum inv_devices {
-#ifdef CONFIG_INV_MPU_IIO_ICM20648
+#if defined(CONFIG_INV_MPU_IIO_ICM20648)
 	ICM20648,
-#else
+#elif defined(CONFIG_INV_MPU_IIO_ICM20608D)
 	ICM20608D,
 	ICM20609I,
 	ICM20789,
-	ICM20690,
+#elif defined(CONFIG_INV_MPU_IIO_ICM20602)
 	ICM20602,
+#elif defined(CONFIG_INV_MPU_IIO_ICM20690)
+	ICM20690,
+#elif defined(CONFIG_INV_MPU_IIO_IAM20680)
 	IAM20680,
+#elif defined(CONFIG_INV_MPU_IIO_ICM42600)
 	ICM42600,
 	ICM42686,
 	ICM42688,
 	ICM40609D,
+#elif defined(CONFIG_INV_MPU_IIO_ICM43600)
 	ICM43600,
+	ICM53600,
+#elif defined(CONFIG_INV_MPU_IIO_ICM45600)
 	ICM45600,
 #endif
 	INV_NUM_PARTS,
@@ -164,6 +178,7 @@ enum inv_devices {
 enum inv_bus_type {
 	BUS_I2C = 0,
 	BUS_SPI,
+	BUS_I3C,
 };
 
 struct inv_mpu_state;
@@ -771,8 +786,7 @@ struct inv_mpu_state {
 	struct device *dev;
 	struct i2c_client *aux_dev;
 	struct iio_trigger *trig;
-	int (*write)(struct inv_mpu_state *st, u8 reg, u8 data);
-	int (*read)(struct inv_mpu_state *st, u8 reg, int len, u8 *data);
+	struct regmap *map;
 	int (*mem_write)(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
 			u32 len, u8 const *data);
 	int (*mem_read)(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
@@ -791,6 +805,8 @@ struct inv_mpu_state {
 	struct inv_timestamp_algo ts_algo;
 #if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
 	bool apex_supported;
+	bool pedometer_supported;
+	bool tilt_supported;
 	bool smd_supported;
 	struct inv_apex_data apex_data;
 #endif
@@ -798,6 +814,7 @@ struct inv_mpu_state {
 	struct inv_engine_info eng_info[ENGINE_NUM_MAX];
 	const struct inv_hw_s *hw;
 	enum inv_devices chip_type;
+	int chip_rev;
 	enum inv_bus_type bus_type;
 	enum inv_fifo_count_mode fifo_count_mode;
 #ifdef CONFIG_HAS_WAKELOCK
@@ -909,7 +926,7 @@ struct inv_mpu_state {
 	u32 bac_bike_conf;
 	u32 bac_run_conf;
 	u32 bac_still_conf;
-	u32 power_on_data;
+	u64 power_on_data;
 	u8 fifo_data_store[HARDWARE_FIFO_SIZE + LEFT_OVER_BYTES];
 	u8 int_en;
 	u8 int_en_2;
@@ -917,6 +934,7 @@ struct inv_mpu_state {
 	int gesture_int_count;
 	u8 smplrt_div;
 	s64 it_timestamp;
+	bool no_fifo;
 };
 
 /**
@@ -1104,8 +1122,6 @@ int inv_set_accel_sf(struct inv_mpu_state *st);
 int inv_write_accel_sf(struct inv_mpu_state *st); /* to DMP */
 int inv_set_gyro_sf(struct inv_mpu_state *st);
 s64 get_time_ns(void);
-int inv_i2c_read_base(struct inv_mpu_state *st, u16 i, u8 r, u16 l, u8 *d);
-int inv_i2c_single_write_base(struct inv_mpu_state *st, u16 i, u8 r, u8 d);
 int write_be32_to_mem(struct inv_mpu_state *st, u32 data, int addr);
 int write_be16_to_mem(struct inv_mpu_state *st, u16 data, int addr);
 int read_be32_from_mem(struct inv_mpu_state *st, u32 *o, int addr);
@@ -1121,7 +1137,7 @@ int inv_set_accel_config2(struct inv_mpu_state *st, bool cycle_mode);
 int inv_stop_dmp(struct inv_mpu_state *st);
 int inv_reset_fifo(struct inv_mpu_state *st, bool turn_off);
 int inv_create_dmp_sysfs(struct iio_dev *ind);
-int inv_check_chip_type(struct iio_dev *indio_dev, const char *name);
+int inv_check_chip_type(struct iio_dev *indio_dev, int chip_type);
 int inv_write_compass_matrix(struct inv_mpu_state *st, int *adj);
 bool inv_mpu_interrupt_handler(struct iio_dev *indio_dev, s64 timestamp);
 irqreturn_t inv_read_fifo(int irq, void *p);
@@ -1198,25 +1214,62 @@ int inv_q30_mult(int a, int b);
 int inv_get_3axis_average(s16 src[], s16 dst[], s16 reset);
 #endif
 
-static inline int inv_plat_single_write(struct inv_mpu_state *st,
-							u8 reg, u8 data)
+/*
+ * icm42600 chips are not supporting SPI burst write.
+ * Implement manual workaroud for Linux kernel where regmap doesn't support
+ * forcing single write access.
+ */
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) && \
+    LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
+static inline int inv_icm42600_plat_write(struct inv_mpu_state *st, unsigned int reg,
+					  size_t len, const u8 *data)
 {
-	int ret = -1;
+	unsigned int i;
+	int ret;
 
-	if (st->write)
-		ret = st->write(st, reg, data);
+	for (i = 0; i < len; ++i) {
+		ret = regmap_write(st->map, reg + i, data[i]);
+		if (ret)
+			return ret;
+	}
 
-	return ret;
+	return 0;
 }
-static inline int inv_plat_read(struct inv_mpu_state *st, u8 reg,
-							int len, u8 *data)
+#endif
+
+static inline int inv_plat_single_write(struct inv_mpu_state *st,
+					unsigned int reg, u8 data)
 {
-	int ret = -1;
+	return regmap_write(st->map, reg, data);
+}
+static inline int inv_plat_write(struct inv_mpu_state *st, unsigned int reg,
+				 size_t len, const u8 *data)
+{
+	if (len == 1)
+		return regmap_write(st->map, reg, data[0]);
+	else
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) && \
+    LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
+		return inv_icm42600_plat_write(st, reg, len, data);
+#else
+		return regmap_bulk_write(st->map, reg, data, len);
+#endif
+}
 
-	if (st->read)
-		ret = st->read(st, reg, len, data);
+static inline int inv_plat_read(struct inv_mpu_state *st, unsigned int reg,
+				size_t len, u8 *data)
+{
+	unsigned int val;
+	int ret;
 
-	return ret;
+	if (len == 1) {
+		ret = regmap_read(st->map, reg, &val);
+		if (!ret)
+			data[0] = val;
+		return ret;
+	} else {
+		return regmap_bulk_read(st->map, reg, data, len);
+	}
 }
 
 int inv_stop_interrupt(struct inv_mpu_state *st);
