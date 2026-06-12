@@ -660,7 +660,7 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 	return 0;
 
 error_free_irq:
-	free_irq(st->irq, st->trig);
+	free_irq(st->irq, indio_dev);
 error_free_trigger:
 	iio_trigger_free(st->trig);
 error_free_buffer2:
@@ -678,7 +678,7 @@ void inv_mpu_unconfigure_ring(struct iio_dev *indio_dev)
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 
 	iio_trigger_unregister(st->trig);
-	free_irq(st->irq, st->trig);
+	free_irq(st->irq, indio_dev);
 	iio_trigger_free(st->trig);
 	iio_triggered_buffer_cleanup(indio_dev);
 };
