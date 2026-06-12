@@ -317,8 +317,12 @@ static int inv_mpu_probe(struct i2c_client *client)
 #ifdef CONFIG_HAS_WAKELOCK
 	wake_lock_init(&st->wake_lock, WAKE_LOCK_SUSPEND, "inv_mpu");
 #else
+#  if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
 	st->wake_lock = wakeup_source_create("inv_mpu");
 	wakeup_source_add(st->wake_lock);
+#  else
+	st->wake_lock = wakeup_source_register(&client->dev, "inv_mpu");
+#  endif
 	if (st->wake_lock)
 		pr_info("wakeup_source is created successfully\n");
 	else
@@ -378,7 +382,11 @@ static int inv_mpu_remove(struct i2c_client *client)
 
 #ifndef CONFIG_HAS_WAKELOCK
 	if (st->wake_lock)
+#  if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
 		wakeup_source_destroy(st->wake_lock);
+#  else
+		wakeup_source_unregister(st->wake_lock);
+#  endif
 #endif
 	if (st->aux_dev)
 		i2c_unregister_device(st->aux_dev);

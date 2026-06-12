@@ -968,9 +968,15 @@ static int inv_mpu_read_event_config(struct iio_dev *indio_dev,
 	return st->chip_config.wom_on ? 1 : 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
 static int inv_mpu_write_event_config(struct iio_dev *indio_dev,
 		const struct iio_chan_spec *chan, enum iio_event_type type,
 		enum iio_event_direction dir, int state)
+#else
+static int inv_mpu_write_event_config(struct iio_dev *indio_dev,
+		const struct iio_chan_spec *chan, enum iio_event_type type,
+		enum iio_event_direction dir, bool state)
+#endif
 {
 	struct inv_mpu_state *st = iio_priv(indio_dev);
 	int enable;

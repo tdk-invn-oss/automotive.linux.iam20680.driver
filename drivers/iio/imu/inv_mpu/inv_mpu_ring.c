@@ -599,8 +599,13 @@ int inv_mpu_configure_ring(struct iio_dev *indio_dev)
 
 #ifdef TIMER_BASED_BATCHING
 	/* configure hrtimer */
+#  if LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0)
 	hrtimer_init(&st->hr_batch_timer, CLOCK_BOOTTIME, HRTIMER_MODE_REL);
 	st->hr_batch_timer.function = inv_batch_timer_handler;
+#  else
+	hrtimer_setup(&st->hr_batch_timer, inv_batch_timer_handler, CLOCK_BOOTTIME,
+		      HRTIMER_MODE_REL);
+#  endif
 	INIT_WORK(&st->batch_work, inv_batch_work);
 #endif
 
