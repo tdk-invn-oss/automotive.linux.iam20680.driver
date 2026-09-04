@@ -455,7 +455,7 @@ int inv_push_8bytes_buffer(struct iio_dev *indio_dev, u16 sensor, u64 t, s16 *d)
 #define DRIVE_WALK (DRIVE | WALK)
 #define DRIVE_RUN (DRIVE | RUN)
 
-char *act_string(s16 data)
+static char *act_string(s16 data)
 {
 	data &= (~TILT);
 	switch (data) {
@@ -481,7 +481,7 @@ char *act_string(s16 data)
 	return "Unknown";
 }
 
-char *inv_tilt_check(s16 data)
+static char *inv_tilt_check(s16 data)
 {
 	if (data & TILT)
 		return "Tilt";

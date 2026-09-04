@@ -73,6 +73,13 @@ inv-mpu-iio-objs += icm45600/inv_mpu_misc_45600.o
 inv-mpu-iio-objs += icm45600/inv_mpu_selftest_45600.o
 inv-mpu-iio-objs += icm45600/inv_slave_compass.o
 inv-mpu-iio-objs += icm45600/inv_slave_pressure.o
+else ifeq ($(CONFIG_INV_MPU_IIO_ICM50600), y)
+inv-mpu-iio-objs += icm50600/inv_mpu_init_50600.o
+inv-mpu-iio-objs += icm50600/inv_mpu_core_50600.o
+inv-mpu-iio-objs += icm50600/inv_mpu_parsing_50600.o
+inv-mpu-iio-objs += icm50600/inv_mpu_setup_50600.o
+inv-mpu-iio-objs += icm50600/inv_mpu_misc_50600.o
+inv-mpu-iio-objs += icm50600/inv_mpu_selftest_50600.o
 endif
 
 # IPL support
@@ -85,4 +92,3 @@ obj-$(CONFIG_INV_MPU_IIO_I2C) += inv-mpu-iio-i2c.o
 inv-mpu-iio-i2c-objs := inv_mpu_i2c.o
 obj-$(CONFIG_INV_MPU_IIO_SPI) += inv-mpu-iio-spi.o
 inv-mpu-iio-spi-objs := inv_mpu_spi.o
-

@@ -263,7 +263,9 @@ int inv_write_cntl(struct inv_mpu_state *st, u16 wd, bool en, int cntl)
 
 int inv_set_power(struct inv_mpu_state *st, bool power_on)
 {
-#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) \
+	|| defined(CONFIG_INV_MPU_IIO_ICM45600) \
+	|| defined(CONFIG_INV_MPU_IIO_ICM50600)
 	if ((!power_on) == st->chip_config.is_asleep)
 		return 0;
 	st->chip_config.is_asleep = !power_on;
@@ -412,7 +414,7 @@ static int inv_lp_en_on_mode(struct inv_mpu_state *st, bool on)
 }
 #endif
 #ifdef CONFIG_INV_MPU_IIO_ICM20608D
-int inv_set_accel_config2(struct inv_mpu_state *st, bool cycle_mode)
+static int inv_set_accel_config2(struct inv_mpu_state *st, bool cycle_mode)
 {
 	int cycle_freq[] = {442, 236, 122, 61};
 	int cont_freq[] = {219, 219, 99, 45, 22, 11, 6};
@@ -469,7 +471,9 @@ static int inv_lp_en_on_mode(struct inv_mpu_state *st, bool on)
 }
 #endif
 
-#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) \
+	|| defined(CONFIG_INV_MPU_IIO_ICM45600) \
+	|| defined(CONFIG_INV_MPU_IIO_ICM50600)
 int inv_set_accel_config2(struct inv_mpu_state *st, bool on)
 {
 	/* dummy */
@@ -489,7 +493,9 @@ static int inv_lp_en_off_mode(struct inv_mpu_state *st, bool on)
 	if (!st->chip_config.is_asleep)
 		return 0;
 
-#if !defined(CONFIG_INV_MPU_IIO_ICM42600) && !defined(CONFIG_INV_MPU_IIO_ICM43600) && !defined(CONFIG_INV_MPU_IIO_ICM45600)
+#if !defined(CONFIG_INV_MPU_IIO_ICM42600) && !defined(CONFIG_INV_MPU_IIO_ICM43600) \
+	&& !defined(CONFIG_INV_MPU_IIO_ICM45600) \
+	&& !defined(CONFIG_INV_MPU_IIO_ICM50600)
 	r = inv_plat_single_write(st, REG_PWR_MGMT_1, BIT_CLK_PLL);
 	usleep_range(REG_UP_TIME_USEC, REG_UP_TIME_USEC + 1);
 #endif
@@ -507,7 +513,9 @@ int inv_switch_power_in_lp(struct inv_mpu_state *st, bool on)
 {
 	int r;
 
-#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) \
+	|| defined(CONFIG_INV_MPU_IIO_ICM45600) \
+	|| defined(CONFIG_INV_MPU_IIO_ICM50600)
 	/* nothing to do, dummy */
 	return 0;
 #endif
@@ -768,7 +776,9 @@ int inv_rate_convert(struct inv_mpu_state *st, int ind, int data)
 
 	return out_hz;
 }
-#elif defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
+#elif defined(CONFIG_INV_MPU_IIO_ICM43600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM45600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM50600)
 int inv_rate_convert(struct inv_mpu_state *st, int ind, int data)
 {
 	int out_hz;
@@ -1194,7 +1204,7 @@ int inv_check_sensor_on(struct inv_mpu_state *st)
 
 	return 0;
 }
-#elif defined(CONFIG_INV_MPU_IIO_ICM45600)
+#elif defined(CONFIG_INV_MPU_IIO_ICM45600) || defined(CONFIG_INV_MPU_IIO_ICM50600)
 int inv_check_sensor_on(struct inv_mpu_state *st)
 {
 	int i;

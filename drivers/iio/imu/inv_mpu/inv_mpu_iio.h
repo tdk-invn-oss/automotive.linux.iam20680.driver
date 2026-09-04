@@ -66,9 +66,11 @@
 #include "icm43600/inv_mpu_iio_reg_43600.h"
 #elif defined(CONFIG_INV_MPU_IIO_ICM45600)
 #include "icm45600/inv_mpu_iio_reg_45600.h"
+#elif defined(CONFIG_INV_MPU_IIO_ICM50600)
+#include "icm50600/inv_mpu_iio_reg_50600.h"
 #endif
 
-#define INVENSENSE_DRIVER_VERSION		"10.7.1-fix2"
+#define INVENSENSE_DRIVER_VERSION		"11.1.0"
 
 /* #define DEBUG */
 
@@ -171,6 +173,8 @@ enum inv_devices {
 	ICM53600,
 #elif defined(CONFIG_INV_MPU_IIO_ICM45600)
 	ICM45600,
+#elif defined(CONFIG_INV_MPU_IIO_ICM50600)
+	ICM50600,
 #endif
 	INV_NUM_PARTS,
 };
@@ -635,7 +639,10 @@ struct inv_timestamp_algo {
 	u32 first_drop_samples[SENSOR_NUM_MAX];
 };
 
-#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM43600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM45600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM50600)
 /**
  *	struct inv_apex_data - apex gesture algo data .
  *	@step_cnt_total: step count total.
@@ -803,7 +810,10 @@ struct inv_mpu_state {
 	struct inv_mpu_slave *slave_als;
 	struct inv_secondary_reg slv_reg[4];
 	struct inv_timestamp_algo ts_algo;
-#if defined(CONFIG_INV_MPU_IIO_ICM42600) || defined(CONFIG_INV_MPU_IIO_ICM43600) || defined(CONFIG_INV_MPU_IIO_ICM45600)
+#if defined(CONFIG_INV_MPU_IIO_ICM42600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM43600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM45600) || \
+	defined(CONFIG_INV_MPU_IIO_ICM50600)
 	bool apex_supported;
 	bool pedometer_supported;
 	bool tilt_supported;

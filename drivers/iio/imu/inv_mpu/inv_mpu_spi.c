@@ -147,6 +147,7 @@ static int inv_mpu_probe(struct spi_device *spi)
 	st->i2c_dis = BIT_SIFS_CFG_SPI_ONLY;
 #elif defined(CONFIG_INV_MPU_IIO_ICM45600)
 	//st->i2c_dis = BIT_SIFS_CFG_SPI_ONLY;
+#elif defined(CONFIG_INV_MPU_IIO_ICM50600)
 #else
 	st->i2c_dis = BIT_I2C_IF_DIS;
 #endif
@@ -337,6 +338,8 @@ static const struct spi_device_id inv_mpu_id[] = {
 	{"icm53600", ICM53600},
 #elif defined(CONFIG_INV_MPU_IIO_ICM45600)
 	{"icm45600", ICM45600},
+#elif defined(CONFIG_INV_MPU_IIO_ICM50600)
+	{"icm50600", ICM50600},
 #endif
 	{}
 };
@@ -403,6 +406,11 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	{
 		.compatible = "invensense,icm45600",
 		.data = (void *)ICM45600,
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM50600)
+	{
+		.compatible = "invensense,icm50600",
+		.data = (void *)ICM50600,
 	},
 #endif
 	{ }

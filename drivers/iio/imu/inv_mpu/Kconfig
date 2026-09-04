@@ -90,6 +90,15 @@ config INV_MPU_IIO_ICM45600
 	  This driver can be built as a module
 	  The module will be called inv-mpu-iio.ko
 
+config INV_MPU_IIO_ICM50600
+	bool "ICM50600"
+	help
+	  Select here if you want to build a driver for the ICM50600
+	  TDK Invensense chip
+
+	  This driver can be built as a module
+	  The module will be called inv-mpu-iio.ko
+
 endchoice
 
 config INV_MPU_IIO_I2C

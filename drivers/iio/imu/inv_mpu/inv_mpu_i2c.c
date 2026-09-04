@@ -451,6 +451,8 @@ static const struct i2c_device_id inv_mpu_id[] = {
 	{"icm53600", ICM53600},
 #elif defined(CONFIG_INV_MPU_IIO_ICM45600)
 	{"icm45600", ICM45600},
+#elif defined(CONFIG_INV_MPU_IIO_ICM50600)
+	{"icm50600", ICM50600},
 #endif
 	{}
 };
@@ -520,6 +522,11 @@ static const struct of_device_id inv_mpu_of_match[] = {
 	{
 		.compatible = "invensense,icm45600",
 		.data = (void *)ICM45600,
+	},
+#elif defined(CONFIG_INV_MPU_IIO_ICM50600)
+	{
+		.compatible = "invensense,icm50600",
+		.data = (void *)ICM50600,
 	},
 #endif
 	{ }

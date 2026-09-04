@@ -31,9 +31,6 @@
 
 #define INV_TIME_CALIB_THRESHOLD_1 2
 
-#define MIN_DELAY (1 * NSEC_PER_MSEC)
-#define JITTER_THRESH (1 * NSEC_PER_MSEC)
-
 static int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 {
 	int i;
@@ -52,8 +49,10 @@ static int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 	ts = ts_algo->last_run_time - st->sensor[ind].time_calib;
 	counter = st->sensor[ind].sample_calib;
 	en_ind = st->sensor[ind].engine_base;
-	/* we average over 2 seconds period to do the timestamp calculation */
-	if ((ts < cal_period) || (counter == 0))
+	/* we average over 200 samples of data or cal is less than 2 second*/
+	if ((ts < cal_period) && (counter < 200))
+		return 0;
+	if (counter == 0)
 		return 0;
 
 	/* this is the first time we do timestamp averaging, return
@@ -106,10 +105,10 @@ static int inv_update_dmp_ts(struct inv_mpu_state *st, int ind)
 			st->sensor[i].dur = st->sensor[i].div *
 			    st->eng_info[en_ind].dur;
 			pr_debug("update dur = %d, %d\n", i, st->sensor[i].dur);
+			st->sensor[i].sample_calib = 0;
 		}
 	}
 
-	st->sensor[ind].sample_calib = 0;
 	st->sensor[ind].time_calib = ts_algo->last_run_time;
 	pr_debug("dur=%d, ind=%d, eng_dur=%d\n", st->sensor[ind].dur, ind,
 		st->eng_info[en_ind].dur);
@@ -164,10 +163,10 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 	struct inv_timestamp_algo *ts_algo = &st->ts_algo;
 
 	/* While reading FIFO COUNT, there can be several sensor ODRs.
-	 * We use (count + 10) * dur to cap the elapse_time between the last
+	 * We use (count + 2) * dur to cap the elapse_time between the last
 	 * time we read FIFO COUNT and the this time we read FIFO COUNT.
 	 */
-	elaps_time = (s64)(st->sensor[i].dur) * (s64)(st->sensor[i].count + 10);
+	elaps_time = (s64)(st->sensor[i].dur) * (s64)(st->sensor[i].count + 2);
 	thresh = ts_algo->last_run_time - elaps_time;
 	current_time = get_time_ns();
 
@@ -197,7 +196,8 @@ int inv_get_dmp_ts(struct inv_mpu_state *st, int i)
 	} else {
 		st->sensor[i].send = true;
 	}
-
+	//pr_info("header=%d, cali=%d\n", st->header_count, st->sensor[i].sample_calib);
+	//pr_info("base=%d, %d\n", st->sensor[i].engine_base, st->ts_algo.clock_base);
 	if ((st->header_count == 1) &&
 			(st->sensor[i].engine_base == st->ts_algo.clock_base))
 		inv_update_dmp_ts(st, i);
